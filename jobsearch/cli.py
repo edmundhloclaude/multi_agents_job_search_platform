@@ -162,7 +162,7 @@ def cmd_craft(args):
 
 def cmd_apply_map(args):
     orch, raw = _orchestrator(args)
-    mapped = orch.run_apply_map(raw.get("user", {}))
+    mapped = orch.run_apply_map()   # identity comes from the accomplishment bank
     print(f"Mapped {len(mapped)} application(s) → apply_status=awaiting_approval.")
     for app in mapped:
         print(f"  • {app.company} — {app.title} ({len(app.fields)} fields, "
@@ -184,7 +184,7 @@ def cmd_apply_submit(args):
 def cmd_run(args):
     orch, raw = _orchestrator(args)
     print("Running full pipeline (halts BEFORE the submit gate)...")
-    awaiting = orch.run_full(raw.get("profile", {}), raw.get("user", {}))
+    awaiting = orch.run_full(raw.get("profile", {}))
     print(f"\nPipeline complete. {len(awaiting)} application(s) awaiting approval.")
     print("Review and submit with:  jobsearch apply-submit")
     orch.close()

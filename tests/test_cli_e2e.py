@@ -44,6 +44,15 @@ def test_full_pipeline_then_gate(cfg_path, capsys):
     orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
     awaiting = orch.store.get_by_status(apply_status=ApplyStatus.AWAITING_APPROVAL)
     assert len(awaiting) == 2
+
+    # Identity in filled applications comes from the accomplishment bank
+    # (name/contact), NOT from any config `user` section.
+    from jobsearch.agents.applier import Applier
+    applier = Applier(orch.store, orch.config.output_dir)
+    app = applier.load_application(awaiting[0].dedup_key)
+    by = {f.name: f.value for f in app.fields}
+    assert by.get("full_name") == "Jane Doe"           # from the example bank
+    assert by.get("email") == "jane.doe@example.com"   # from the bank's contact
     orch.close()
 
 

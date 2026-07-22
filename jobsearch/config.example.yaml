@@ -42,15 +42,9 @@ profile:
   dealbreakers: ["unpaid"]
   keywords_boost: []
 
-# --- your identity for filling applications --------------------------------- #
-# NOTE: never put passwords / payment / SSN here. No agent handles those.
-user:
-  name: "<Your Name>"
-  contact:
-    email: "you@example.com"
-    phone: ""
-    linkedin: ""
-    website: ""
+# NOTE: your identity (name + contact) is NOT configured here. It lives in the
+# accomplishment bank (name/contact), which the Crafter and Applier read. The
+# Strategy Advisor never sees it. Never put passwords / payment / SSN anywhere.
 
 # --- job sources ------------------------------------------------------------ #
 # The offline mock source is enabled so the walkthrough runs with no keys.

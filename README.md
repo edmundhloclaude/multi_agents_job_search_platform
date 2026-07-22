@@ -86,19 +86,22 @@ The schema (`jobsearch/store/schema.sql`) is applied automatically on first run
 
 ## Configuration (`jobsearch/config.yaml`)
 
-Single source of truth for paths, model name, sources, and the two user inputs.
+Operational settings only. Copy `config.example.yaml` → `config.yaml` (git-ignored).
 
 - `paths` — db, output dir, `strategy.md`, and the accomplishment bank
   (relative paths resolve against the config file's directory).
-- `browser.driver` — `mock` (ships enabled, runs the whole pipeline offline via
-  `mock_fixtures.json`) or `cua` (real Chrome via Claude computer-use).
-  **Switch to `cua` for real crawling/applying.**
+- `llm` — reasoning backend: `provider: none` (offline) or `openai` (+ model).
+- `browser.driver` — `mock` (offline fixtures), `playwright` (real Chromium), or
+  `cua` (Claude computer-use stub).
 - `profile` — the Strategy Advisor's input (aspirations, comp band, must-haves,
-  dealbreakers…).
-- `user` — identity used to fill applications. **Never put passwords / payment /
-  SSN here; no agent handles those.**
-- `sources` — each with `enabled`, `rate_limit_per_min`, `type` (`api`/`browser`),
-  and selectors. Disabled by default unless deliberately enabled.
+  dealbreakers…). *No identity here* — see below.
+- `sources` — each with `enabled`, `rate_limit_per_min`, `type`
+  (`api`/`browser`/`mcp`); secrets referenced by env-var name, never inline.
+
+**Your identity is not in config.** Name and contact live in the **accomplishment
+bank** (`name` / `contact`) — the Crafter uses them for résumés and the Applier for
+form-filling. The Strategy Advisor never receives identity. (Never put passwords /
+payment / SSN anywhere — no agent handles those.)
 
 ---
 
@@ -335,7 +338,7 @@ jobsearch/
     mock_controller.py# for tests / offline demo
   models.py           # shared dataclasses
   cli.py              # argparse CLI
-  config.yaml         # sources, rate limits, paths, model, profile, user
+  config.example.yaml # template → copy to config.yaml (paths, llm, browser, sources, profile)
   accomplishment_bank.example.yaml
   mock_fixtures.json  # offline pages for browser.driver=mock
 tests/

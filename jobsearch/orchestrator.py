@@ -255,10 +255,23 @@ class Orchestrator:
         self.log("craft", TIER.value, f"crafted={res['crafted']} refused={res['refused']}")
         return res
 
-    def run_apply_map(self, user: dict, *, form_field_selector: str = "form_field"):
+    def _identity_from_bank(self) -> dict:
+        """Candidate identity for filling applications comes from the accomplishment
+        bank (the Crafter's domain) — NOT from config. Single source of truth for
+        who you are; the Strategy Advisor never sees this."""
+        try:
+            bank = self._load_bank()
+            return {"name": bank.name, "contact": dict(bank.contact)}
+        except Exception:
+            return {"name": "", "contact": {}}
+
+    def run_apply_map(self, user: dict | None = None, *,
+                      form_field_selector: str = "form_field"):
         """SAFE map phase over all drafted (screened_in + docs) jobs."""
         from .agents.applier import Applier, MAP_TIER
         from .models import ApplyStatus, ScreenStatus
+        if user is None:
+            user = self._identity_from_bank()
         applier = Applier(self.store, self.config.output_dir)
         self.log("apply-map", MAP_TIER.value, "started")
         controller = self.read_only_controller()  # map reads read-only
@@ -303,12 +316,12 @@ class Orchestrator:
             results.append((p.dedup_key, status))
         return results
 
-    def run_full(self, profile: dict, user: dict, *, api_fetchers=None):
+    def run_full(self, profile: dict, *, api_fetchers=None):
         """Full pipeline, halting AT the submit gate (spec §5)."""
         self.run_strategy(profile)
         self.run_crawl(api_fetchers=api_fetchers)
         self.run_screen()
         self.run_craft()
-        self.run_apply_map(user)
+        self.run_apply_map()   # identity sourced from the bank, not config
         # Stops here: apply-submit is a separate, human-gated stage.
         return self.store.get_by_status(apply_status=ApplyStatus.AWAITING_APPROVAL)
