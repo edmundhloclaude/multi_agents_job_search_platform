@@ -147,6 +147,7 @@ python -m jobsearch craft         # tailor resume + cover letter for screened_in
 python -m jobsearch apply-map     # SAFE: map each form to your data -> awaiting_approval
 python -m jobsearch apply-submit  # GATED: review + type SUBMIT to submit, one job at a time
 python -m jobsearch status -v     # summary table + postings + run log
+python -m jobsearch reset         # clear the store (--yes to skip prompt, --all also wipes docs/strategy)
 ```
 
 Or the whole thing at once, **which deliberately halts before the gate**:

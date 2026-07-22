@@ -75,6 +75,45 @@ def test_apply_submit_gate_approve_and_decline(cfg_path, capsys, monkeypatch):
     orch.close()
 
 
+def test_reset_requires_confirmation(cfg_path, capsys, monkeypatch):
+    cli.main(["-c", cfg_path, "run"])           # populate
+    capsys.readouterr()
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    assert len(orch.store.all()) > 0
+    orch.close()
+
+    monkeypatch.setattr("builtins.input", lambda *a: "no")   # decline
+    cli.main(["-c", cfg_path, "reset"])
+    out = capsys.readouterr().out
+    assert "Aborted" in out
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    assert len(orch.store.all()) > 0            # nothing deleted
+    orch.close()
+
+
+def test_reset_yes_clears_store(cfg_path, capsys):
+    cli.main(["-c", cfg_path, "run"])
+    capsys.readouterr()
+    cli.main(["-c", cfg_path, "reset", "--yes"])
+    out = capsys.readouterr().out
+    assert "Cleared" in out
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    assert orch.store.all() == []
+    orch.close()
+
+
+def test_reset_all_clears_docs_and_strategy(cfg_path, capsys):
+    cli.main(["-c", cfg_path, "run"])           # crafts docs + writes strategy.md
+    capsys.readouterr()
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    out_dir, strat = orch.config.output_dir, orch.config.strategy_path
+    orch.close()
+    assert os.path.exists(strat)
+    cli.main(["-c", cfg_path, "reset", "--yes", "--all"])
+    assert not os.path.exists(strat)
+    assert not any(os.scandir(out_dir))         # output dir emptied
+
+
 def test_status_runs(cfg_path, capsys):
     cli.main(["-c", cfg_path, "crawl"])
     cli.main(["-c", cfg_path, "status", "-v"])

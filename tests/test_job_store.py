@@ -122,3 +122,16 @@ def test_status_counts(store):
     store.upsert_posting(_posting(title="B"))
     counts = store.status_counts()
     assert counts["screen"].get("unscreened") == 2
+
+
+def test_reset_clears_postings_and_runs(store):
+    store.upsert_posting(_posting(title="A"))
+    store.upsert_posting(_posting(title="B"))
+    store.log_run("crawl", "READ_BROWSER", "x")
+    removed = store.reset()
+    assert removed == 2
+    assert store.all() == []
+    assert store.recent_runs() == []
+    # store is still usable after reset
+    store.upsert_posting(_posting(title="C"))
+    assert len(store.all()) == 1

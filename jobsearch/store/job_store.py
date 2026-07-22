@@ -193,6 +193,15 @@ class JobStore:
     # ------------------------------------------------------------------ #
     # Run log (spec §5)
     # ------------------------------------------------------------------ #
+    def reset(self) -> int:
+        """Clear all postings and the run log. Returns the number of postings removed.
+        Keeps the schema/file so the store is immediately reusable."""
+        n = self._conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+        self._conn.execute("DELETE FROM jobs")
+        self._conn.execute("DELETE FROM run_log")
+        self._conn.commit()
+        return int(n)
+
     def log_run(self, stage: str, tier: str = "", message: str = "") -> None:
         self._conn.execute(
             "INSERT INTO run_log (ts, stage, tier, message) VALUES (?,?,?,?)",

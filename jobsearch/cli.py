@@ -202,6 +202,31 @@ def cmd_strategy_web(args):
     serve(cfg, host=args.host, port=args.port)
 
 
+def cmd_reset(args):
+    orch, _ = _orchestrator(args)
+    n = len(orch.store.all())
+    scope = "the job store" + (" + crafted docs + strategy.md" if args.all else "")
+    if not args.yes:
+        resp = input(f"This will clear {scope} ({n} posting(s)). Type 'reset' to confirm: ")
+        if resp.strip().lower() != "reset":
+            print("Aborted — nothing changed.")
+            orch.close()
+            return
+    removed = orch.store.reset()
+    print(f"Cleared {removed} posting(s) from the store.")
+    if args.all:
+        out = Path(orch.config.output_dir)
+        if out.exists():
+            for f in out.iterdir():
+                if f.is_file():
+                    f.unlink()
+        strat = Path(orch.config.strategy_path)
+        if strat.exists():
+            strat.unlink()
+        print("Cleared crafted docs (output/) and strategy.md.")
+    orch.close()
+
+
 def cmd_gaps(args):
     orch, _ = _orchestrator(args)
     from .agents.strategy import gap_report
@@ -279,6 +304,11 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8765)
     sv.set_defaults(func=cmd_serve)
+    rs = sub.add_parser("reset", help="clear the job store (and optionally crafted docs)")
+    rs.add_argument("-y", "--yes", action="store_true", help="skip the confirmation prompt")
+    rs.add_argument("--all", action="store_true",
+                    help="also delete crafted docs (output/) and strategy.md")
+    rs.set_defaults(func=cmd_reset)
     sub.add_parser("gaps", help="skills your strategy targets that the bank can't back").set_defaults(func=cmd_gaps)
     sw = sub.add_parser("strategy-web", help="interactive strategy advisor (chat + docs) web UI")
     sw.add_argument("--host", default="127.0.0.1")
