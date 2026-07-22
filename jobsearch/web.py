@@ -24,11 +24,19 @@ def build_state(store: JobStore, *, max_jobs: int = 300, max_runs: int = 60) -> 
     counts = store.status_counts()
     jobs = []
     for p in store.all()[:max_jobs]:
+        raw = p.raw if isinstance(p.raw, dict) else {}
+        desc = str(raw.get("description", "") or "")[:600]
         jobs.append({
+            "dedup_key": p.dedup_key,
             "company": p.company, "title": p.title, "location": p.location,
-            "source": p.source, "screen_status": p.screen_status,
-            "screen_score": p.screen_score, "apply_status": p.apply_status,
-            "response_status": p.response_status,
+            "source": p.source, "source_url": p.source_url,
+            "comp_text": p.comp_text, "application_method": p.application_method,
+            "requirements": p.requirements,
+            "screen_status": p.screen_status, "screen_score": p.screen_score,
+            "screen_rationale": p.screen_rationale,
+            "apply_status": p.apply_status, "response_status": p.response_status,
+            "resume_path": p.resume_path, "cover_letter_path": p.cover_letter_path,
+            "description": desc,
         })
     return {
         "counts": counts,
@@ -79,6 +87,13 @@ _HTML = r"""<!doctype html>
   .s-screened_out,.s-skipped,.s-rejected,.s-failed{color:#ff7a90}
   .s-awaiting_approval,.s-drafted{color:#ffb454}
   .log{max-height:320px;overflow:auto} .wrap{overflow-x:auto}
+  tr.jobrow{cursor:pointer} tr.jobrow:hover{background:rgba(127,127,127,.10)}
+  tr.jobrow td:first-child::before{content:"▸ ";color:var(--muted)}
+  tr.jobrow.open td:first-child::before{content:"▾ "}
+  tr.detail>td{background:rgba(127,127,127,.06);white-space:normal;max-width:none}
+  .dgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px 18px;padding:6px 2px}
+  .dgrid .full{grid-column:1/-1} .dgrid b{color:var(--muted);font-weight:600;margin-right:6px}
+  .dgrid a{color:var(--accent);word-break:break-all}
   .foot{color:var(--muted);font-size:12px;padding:2px 2px}
 </style></head><body>
 <header><span class="dot"></span><h1>Job Search — Agent Activity</h1>
@@ -120,13 +135,34 @@ function runsTable(runs){
     return `<tr><td class="muted">${esc(t)}</td><td>${esc(r.stage)}</td><td>${tier}</td><td class="muted">${esc(r.message)}</td></tr>`;
   }).join("");
 }
+const expanded=new Set();   // dedup_keys whose detail row is open (survives refresh)
+function detailHtml(j){
+  const reqs=(j.requirements||[]).map(r=>`<span class="badge">${esc(r)}</span>`).join(" ")||"—";
+  const url=j.source_url?`<a href="${esc(j.source_url)}" target="_blank" rel="noopener">${esc(j.source_url)}</a>`:"—";
+  const docs=[j.resume_path&&"résumé",j.cover_letter_path&&"cover"].filter(Boolean).join(" + ")||"—";
+  return `<div class="dgrid">
+    <div><b>Location</b>${esc(j.location)||"—"}</div>
+    <div><b>Comp</b>${esc(j.comp_text)||"—"}</div>
+    <div><b>Method</b>${esc(j.application_method)||"—"}</div>
+    <div class="full"><b>URL</b>${url}</div>
+    <div class="full"><b>Requirements</b>${reqs}</div>
+    <div class="full"><b>Screen</b>${j.screen_score==null?"—":j.screen_score+"/100"} — ${esc(j.screen_rationale)||"(not screened)"}</div>
+    <div class="full"><b>Docs</b>${esc(docs)}</div>
+    ${j.description?`<div class="full"><b>Description</b><span class="muted">${esc(j.description)}${j.description.length>=600?"…":""}</span></div>`:""}
+  </div>`;
+}
 function jobsTable(js){
-  document.querySelector("#jobs tbody").innerHTML = js.map(j=>`<tr>
-    <td>${esc(j.company)}</td><td>${esc(j.title)}</td><td class="muted">${esc(j.source)}</td>
-    <td class="s-${esc(j.screen_status)}">${esc(j.screen_status)}</td>
-    <td>${j.screen_score==null?"—":j.screen_score}</td>
-    <td class="s-${esc(j.apply_status)}">${esc(j.apply_status)}</td>
-    <td class="s-${esc(j.response_status)}">${esc(j.response_status)}</td></tr>`).join("");
+  document.querySelector("#jobs tbody").innerHTML = js.map(j=>{
+    const open=expanded.has(j.dedup_key);
+    return `<tr class="jobrow${open?" open":""}" data-key="${esc(j.dedup_key)}">
+      <td>${esc(j.company)}</td><td>${esc(j.title)}</td><td class="muted">${esc(j.source)}</td>
+      <td class="s-${esc(j.screen_status)}">${esc(j.screen_status)}</td>
+      <td>${j.screen_score==null?"—":j.screen_score}</td>
+      <td class="s-${esc(j.apply_status)}">${esc(j.apply_status)}</td>
+      <td class="s-${esc(j.response_status)}">${esc(j.response_status)}</td></tr>
+      <tr class="detail" data-for="${esc(j.dedup_key)}" style="display:${open?"table-row":"none"}">
+        <td colspan="7">${detailHtml(j)}</td></tr>`;
+  }).join("");
 }
 let state={totals:{postings:0},counts:{}};
 async function tick(){
@@ -137,6 +173,16 @@ async function tick(){
     document.getElementById("foot").textContent = "updated "+new Date().toLocaleTimeString();
   }catch(e){ document.getElementById("foot").textContent="disconnected — retrying…"; }
 }
+// Click a job row to expand/collapse its details (delegated; survives refresh).
+document.querySelector("#jobs tbody").addEventListener("click", e=>{
+  const tr=e.target.closest("tr.jobrow"); if(!tr) return;
+  const key=tr.dataset.key;
+  if(expanded.has(key)) expanded.delete(key); else expanded.add(key);
+  tr.classList.toggle("open");
+  const d=tr.nextElementSibling;
+  if(d&&d.classList.contains("detail"))
+    d.style.display = (d.style.display==="none"?"table-row":"none");
+});
 tick(); setInterval(tick, 2000);
 </script></body></html>"""
 

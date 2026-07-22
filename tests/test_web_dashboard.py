@@ -34,8 +34,14 @@ def test_build_state_shape(db):
     s.close()
     assert st["totals"]["postings"] == 1
     assert st["counts"]["screen"].get("screened_in") == 1
-    assert st["jobs"][0]["company"] == "Acme"
-    assert st["jobs"][0]["screen_score"] == 88
+    j = st["jobs"][0]
+    assert j["company"] == "Acme"
+    assert j["screen_score"] == 88
+    # detail fields available for the expandable row
+    for k in ("dedup_key", "source_url", "comp_text", "requirements",
+              "screen_rationale", "application_method", "description"):
+        assert k in j
+    assert j["screen_rationale"] == "good"
     assert any(r["stage"] == "crawl" for r in st["runs"])
 
 
