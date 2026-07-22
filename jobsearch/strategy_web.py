@@ -1,0 +1,202 @@
+"""Interactive Strategy Advisor web UI (chat + document upload -> criteria YAML).
+
+A small local web app: chat with the advisor, upload documents (résumé, job
+descriptions, brag docs), watch the machine-usable criteria YAML update live, and
+Save it to strategy.md. Backed by OpenAI via ``StrategySession``.
+
+Localhost-only. Writes ONLY strategy.md on explicit Save (SAFE tier, local output).
+It cannot crawl, screen, or submit — this is purely the strategy authoring surface.
+"""
+
+from __future__ import annotations
+
+import base64
+import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from .agents.doc_ingest import DocIngestError, extract_text
+from .agents.strategy_session import StrategySession
+
+_HTML = r"""<!doctype html><html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strategy Advisor</title>
+<style>
+ :root{color-scheme:light dark;--bg:#0f1420;--card:#1a2130;--fg:#e7ecf3;--muted:#93a1b5;
+   --line:#2a3446;--accent:#5b9dff;--you:#26324a;--bot:#1e2a1f}
+ @media(prefers-color-scheme:light){:root{--bg:#f4f6fb;--card:#fff;--fg:#101828;
+   --muted:#5b667a;--line:#e4e8f0;--accent:#2f6fed;--you:#e7efff;--bot:#eaf5ec}}
+ *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);
+   font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;height:100vh;overflow:hidden}
+ header{padding:12px 18px;border-bottom:1px solid var(--line);display:flex;gap:10px;align-items:center}
+ h1{font-size:15px;margin:0;font-weight:650}.muted{color:var(--muted);font-size:12px}
+ .wrap{display:grid;grid-template-columns:1fr 420px;height:calc(100vh - 49px)}
+ .col{display:flex;flex-direction:column;min-height:0}.col.right{border-left:1px solid var(--line)}
+ .msgs{flex:1;overflow:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+ .msg{padding:9px 12px;border-radius:12px;max-width:80%;white-space:pre-wrap}
+ .msg.user{align-self:flex-end;background:var(--you)}.msg.assistant{align-self:flex-start;background:var(--bot)}
+ .bar{border-top:1px solid var(--line);padding:10px;display:flex;gap:8px;align-items:flex-end}
+ textarea{flex:1;resize:none;background:var(--card);color:var(--fg);border:1px solid var(--line);
+   border-radius:10px;padding:9px 11px;font:inherit;min-height:42px;max-height:140px}
+ button{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 14px;
+   font-weight:600;cursor:pointer}button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+ .right .pad{padding:14px;overflow:auto;flex:1}
+ h2{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin:0 0 8px}
+ pre{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;
+   font:12px/1.5 ui-monospace,Menlo,Consolas,monospace;white-space:pre;margin:0}
+ .chip{display:inline-block;background:var(--card);border:1px solid var(--line);border-radius:20px;
+   padding:2px 9px;margin:2px 4px 2px 0;font-size:12px}
+ .warn{color:#ffb454;font-size:12px;margin-top:8px}.ok{color:#3ddc84;font-size:12px}
+ label.up{display:inline-block;border:1px dashed var(--line);border-radius:10px;padding:8px 12px;
+   cursor:pointer;color:var(--muted);font-size:13px}
+</style></head><body>
+<header><h1>Strategy Advisor</h1><span class="muted" id="sub">chat + documents → screening criteria</span></header>
+<div class="wrap">
+ <div class="col">
+   <div class="msgs" id="msgs"></div>
+   <div class="bar">
+     <label class="up">📎 doc<input id="file" type="file" style="display:none"
+        accept=".txt,.md,.pdf,.docx,.csv,.json"></label>
+     <textarea id="in" placeholder="Tell the advisor about your goals, or ask a question…"></textarea>
+     <button id="send">Send</button>
+   </div>
+ </div>
+ <div class="col right">
+   <div class="pad">
+     <h2>Documents</h2><div id="docs" class="muted">none yet</div>
+     <h2 style="margin-top:16px">Screening criteria (YAML)</h2>
+     <pre id="yaml">—</pre>
+     <div id="warn" class="warn"></div>
+   </div>
+   <div class="bar" style="justify-content:flex-end">
+     <span id="saved" class="ok"></span>
+     <button id="save" class="ghost">Save to strategy.md</button>
+   </div>
+ </div>
+</div>
+<script>
+const $=s=>document.querySelector(s);
+function render(st){
+  $("#msgs").innerHTML = (st.messages||[]).map(m=>`<div class="msg ${m.role}">${esc(m.content)}</div>`).join("");
+  $("#msgs").scrollTop = 1e9;
+  $("#yaml").textContent = st.yaml || "—";
+  $("#docs").innerHTML = (st.documents&&st.documents.length)
+     ? st.documents.map(d=>`<span class="chip">${esc(d)}</span>`).join("") : '<span class="muted">none yet</span>';
+  const u = st.ungrounded_must_haves||[];
+  $("#warn").textContent = u.length ? ("⚠ must-haves not grounded in your bank/aspirations: "+u.join(", ")) : "";
+}
+const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+  body:JSON.stringify(body||{})});return r.json();}
+async function load(){render(await (await fetch("/api/state")).json());}
+async function send(){const t=$("#in").value.trim();if(!t)return;$("#in").value="";
+  $("#send").disabled=true;$("#send").textContent="…";
+  render(await post("/api/message",{text:t}));$("#send").disabled=false;$("#send").textContent="Send";}
+$("#send").onclick=send;
+$("#in").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send();}});
+$("#file").onchange=async e=>{const f=e.target.files[0];if(!f)return;
+  const b64=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result.split(",")[1]);r.readAsDataURL(f);});
+  $("#sub").textContent="reading "+f.name+"…";
+  const st=await post("/api/upload",{name:f.name,b64});
+  $("#sub").textContent = st.error? ("upload error: "+st.error) : "uploaded "+f.name;
+  render(st); e.target.value="";};
+$("#save").onclick=async()=>{const r=await post("/api/save",{});$("#saved").textContent="saved → "+r.saved;
+  setTimeout(()=>$("#saved").textContent="",4000);};
+load();
+</script></body></html>"""
+
+
+class _Handler(BaseHTTPRequestHandler):
+    def log_message(self, *a):
+        pass
+
+    def _send(self, code, body: bytes, ctype: str):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _json(self, obj, code=200):
+        self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
+
+    def _read_json(self) -> dict:
+        n = int(self.headers.get("Content-Length", 0) or 0)
+        if not n:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n).decode("utf-8"))
+        except json.JSONDecodeError:
+            return {}
+
+    @property
+    def session(self) -> StrategySession:
+        return self.server.session
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            self._send(200, _HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif self.path.startswith("/api/state"):
+            self._json(self.session.state())
+        else:
+            self._send(404, b"not found", "text/plain")
+
+    def do_POST(self):
+        if self.path == "/api/message":
+            text = str(self._read_json().get("text", "")).strip()
+            self._json(self.session.send(text) if text else self.session.state())
+        elif self.path == "/api/upload":
+            body = self._read_json()
+            name = body.get("name", "document")
+            try:
+                data = base64.b64decode(body.get("b64", ""))
+                text = extract_text(name, data)
+            except DocIngestError as e:
+                self._json({**self.session.state(), "error": str(e)})
+                return
+            except Exception as e:
+                self._json({**self.session.state(), "error": f"decode failed: {e}"})
+                return
+            self.session.add_document(name, text)
+            self._json(self.session.note_document(name))
+        elif self.path == "/api/save":
+            path = self.session.save(self.server.strategy_path)
+            self._json({"saved": path})
+        else:
+            self._send(404, b"not found", "text/plain")
+
+
+class _Server(ThreadingHTTPServer):
+    def __init__(self, addr, session: StrategySession, strategy_path: str):
+        super().__init__(addr, _Handler)
+        self.session = session
+        self.strategy_path = strategy_path
+
+
+def create_server(session: StrategySession, strategy_path: str,
+                  host: str = "127.0.0.1", port: int = 8766) -> _Server:
+    return _Server((host, port), session, strategy_path)
+
+
+def serve(config, *, host: str = "127.0.0.1", port: int = 8766) -> None:
+    """Build a session from config (OpenAI + bank + profile) and serve the UI."""
+    from .llm.openai_llm import OpenAILLM
+    raw = config.raw or {}
+    model = (raw.get("llm", {}) or {}).get("model", "gpt-4o-mini")
+    llm = OpenAILLM(model=model)   # chat requires OpenAI; needs OPENAI_API_KEY
+    try:
+        import yaml
+        from pathlib import Path
+        from .models import AccomplishmentBank
+        bank = AccomplishmentBank.from_dict(
+            yaml.safe_load(Path(config.accomplishment_bank_path).read_text("utf-8")) or {})
+    except Exception:
+        bank = None
+    session = StrategySession(llm, profile=raw.get("profile", {}), bank=bank)
+    srv = create_server(session, config.strategy_path, host, port)
+    print(f"Strategy Advisor (chat) → http://{host}:{port}   (Ctrl-C to stop)")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()

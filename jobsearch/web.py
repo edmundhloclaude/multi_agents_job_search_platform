@@ -1,0 +1,187 @@
+"""Read-only web dashboard for the Orchestrator (stdlib http.server, no deps).
+
+Renders what the multi-agent pipeline is doing by reading the SAME SQLite store
+the Orchestrator writes to: the run_log (stage + trust tier + message) and the
+job statuses. A separate `jobsearch serve` process and a running pipeline share
+the store file, so the dashboard updates live as stages execute.
+
+Deliberately READ-ONLY and localhost-only: it cannot trigger stages and cannot
+submit anything. The submit gate stays a typed CLI confirmation (spec §0.2);
+a web button must never be able to cross it.
+"""
+
+from __future__ import annotations
+
+import json
+from functools import partial
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+from .store.job_store import JobStore
+
+
+def build_state(store: JobStore, *, max_jobs: int = 300, max_runs: int = 60) -> dict:
+    """Snapshot the store for the dashboard (pure read)."""
+    counts = store.status_counts()
+    jobs = []
+    for p in store.all()[:max_jobs]:
+        jobs.append({
+            "company": p.company, "title": p.title, "location": p.location,
+            "source": p.source, "screen_status": p.screen_status,
+            "screen_score": p.screen_score, "apply_status": p.apply_status,
+            "response_status": p.response_status,
+        })
+    return {
+        "counts": counts,
+        "jobs": jobs,
+        "runs": store.recent_runs(max_runs),
+        "totals": {
+            "postings": len(store.all()),
+        },
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Dashboard HTML (self-contained; polls /api/state).
+# --------------------------------------------------------------------------- #
+_HTML = r"""<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Job Search — Agent Activity</title>
+<style>
+  :root { color-scheme: light dark; --bg:#0f1420; --card:#1a2130; --fg:#e7ecf3;
+          --muted:#93a1b5; --line:#2a3446; --accent:#5b9dff; }
+  @media (prefers-color-scheme: light){ :root{ --bg:#f4f6fb; --card:#fff; --fg:#101828;
+          --muted:#5b667a; --line:#e4e8f0; --accent:#2f6fed; } }
+  *{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--fg);
+    font:14px/1.5 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;
+    align-items:center;gap:12px;position:sticky;top:0;background:var(--bg);z-index:5}
+  h1{font-size:16px;margin:0;font-weight:650} .dot{width:9px;height:9px;border-radius:50%;
+    background:#3ddc84;box-shadow:0 0 0 3px rgba(61,220,132,.2)} .muted{color:var(--muted)}
+  main{padding:18px 22px;max-width:1200px;margin:0 auto;display:grid;gap:18px}
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .tile .n{font-size:22px;font-weight:700} .tile .l{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+  .card h2{font-size:13px;margin:0;padding:12px 14px;border-bottom:1px solid var(--line);
+    text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .stages{display:flex;flex-wrap:wrap;gap:8px;padding:14px}
+  .stage{padding:6px 11px;border-radius:20px;border:1px solid var(--line);font-size:12px;color:var(--muted)}
+  .stage.done{border-color:#3ddc84;color:var(--fg)} .stage.active{border-color:var(--accent);
+    color:var(--fg);box-shadow:0 0 0 2px rgba(91,157,255,.25)}
+  table{width:100%;border-collapse:collapse} th,td{text-align:left;padding:9px 14px;
+    border-bottom:1px solid var(--line);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:340px}
+  th{color:var(--muted);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em}
+  .badge{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--line)}
+  .tier-SAFE{color:#3ddc84;border-color:#3ddc84} .tier-READ_BROWSER{color:#5b9dff;border-color:#5b9dff}
+  .tier-GATED{color:#ffb454;border-color:#ffb454}
+  .s-screened_in,.s-submitted,.s-offer,.s-interview{color:#3ddc84}
+  .s-screened_out,.s-skipped,.s-rejected,.s-failed{color:#ff7a90}
+  .s-awaiting_approval,.s-drafted{color:#ffb454}
+  .log{max-height:320px;overflow:auto} .wrap{overflow-x:auto}
+  .foot{color:var(--muted);font-size:12px;padding:2px 2px}
+</style></head><body>
+<header><span class="dot"></span><h1>Job Search — Agent Activity</h1>
+  <span class="muted" id="sub"></span></header>
+<main>
+  <div class="tiles" id="tiles"></div>
+  <div class="card"><h2>Pipeline</h2><div class="stages" id="stages"></div></div>
+  <div class="card"><h2>Activity log (Orchestrator run log)</h2>
+    <div class="wrap log"><table id="runs"><thead><tr><th>Time</th><th>Stage</th><th>Tier</th><th>Detail</th></tr></thead><tbody></tbody></table></div></div>
+  <div class="card"><h2>Jobs</h2>
+    <div class="wrap"><table id="jobs"><thead><tr><th>Company</th><th>Title</th><th>Source</th><th>Screen</th><th>Score</th><th>Apply</th><th>Response</th></tr></thead><tbody></tbody></table></div></div>
+  <div class="foot" id="foot"></div>
+</main>
+<script>
+const STAGES = ["strategy","crawl","screen","craft","apply-map","apply-submit"];
+const esc = s => String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+function tiles(c){
+  const g=(o)=>Object.entries(o||{}).map(([k,v])=>`<span class="s-${k}">${k} ${v}</span>`).join(" · ")||"—";
+  document.getElementById("tiles").innerHTML = [
+    ["Postings", state.totals.postings],
+    ["Screened", g(c.screen)],["Applications", g(c.apply)],["Responses", g(c.response)],
+  ].map(([l,v])=>`<div class="tile"><div class="n" style="font-size:${typeof v==="number"?22:13}px">${v}</div><div class="l">${l}</div></div>`).join("");
+}
+function stages(runs){
+  const started=new Set(), done=new Set();
+  runs.slice().reverse().forEach(r=>{ const s=r.stage;
+    if((r.message||"").includes("started")) started.add(s); else done.add(s); });
+  const last = runs[0] ? runs[0].stage : null;
+  const lastRunning = runs[0] && (runs[0].message||"").includes("started");
+  document.getElementById("stages").innerHTML = STAGES.map(s=>{
+    let cls = done.has(s)?"done":""; if(lastRunning && s===last) cls="active";
+    return `<span class="stage ${cls}">${s}</span>`;}).join("");
+}
+function runsTable(runs){
+  document.querySelector("#runs tbody").innerHTML = runs.map(r=>{
+    const t=(r.ts||"").replace("T"," ").slice(0,19);
+    const tier=r.tier?`<span class="badge tier-${esc(r.tier)}">${esc(r.tier)}</span>`:"";
+    return `<tr><td class="muted">${esc(t)}</td><td>${esc(r.stage)}</td><td>${tier}</td><td class="muted">${esc(r.message)}</td></tr>`;
+  }).join("");
+}
+function jobsTable(js){
+  document.querySelector("#jobs tbody").innerHTML = js.map(j=>`<tr>
+    <td>${esc(j.company)}</td><td>${esc(j.title)}</td><td class="muted">${esc(j.source)}</td>
+    <td class="s-${esc(j.screen_status)}">${esc(j.screen_status)}</td>
+    <td>${j.screen_score==null?"—":j.screen_score}</td>
+    <td class="s-${esc(j.apply_status)}">${esc(j.apply_status)}</td>
+    <td class="s-${esc(j.response_status)}">${esc(j.response_status)}</td></tr>`).join("");
+}
+let state={totals:{postings:0},counts:{}};
+async function tick(){
+  try{
+    const r=await fetch("/api/state"); state=await r.json();
+    tiles(state.counts); stages(state.runs); runsTable(state.runs); jobsTable(state.jobs);
+    document.getElementById("sub").textContent = state.totals.postings+" postings";
+    document.getElementById("foot").textContent = "updated "+new Date().toLocaleTimeString();
+  }catch(e){ document.getElementById("foot").textContent="disconnected — retrying…"; }
+}
+tick(); setInterval(tick, 2000);
+</script></body></html>"""
+
+
+class _Handler(BaseHTTPRequestHandler):
+    db_path = None  # set via partial/subclass
+
+    def log_message(self, *a):  # silence default request logging
+        pass
+
+    def _send(self, code, body: bytes, ctype: str):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            self._send(200, _HTML.encode("utf-8"), "text/html; charset=utf-8")
+        elif self.path.startswith("/api/state"):
+            store = JobStore(self.db_path)   # fresh read connection per request
+            try:
+                body = json.dumps(build_state(store)).encode("utf-8")
+            finally:
+                store.close()
+            self._send(200, body, "application/json")
+        else:
+            self._send(404, b"not found", "text/plain")
+
+    # Only GET is allowed; the dashboard is strictly read-only.
+    def do_POST(self):
+        self._send(405, b"read-only dashboard", "text/plain")
+
+
+def create_server(db_path: str, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+    handler = type("BoundHandler", (_Handler,), {"db_path": db_path})
+    return ThreadingHTTPServer((host, port), handler)
+
+
+def serve(db_path: str, host: str = "127.0.0.1", port: int = 8765) -> None:
+    srv = create_server(db_path, host, port)
+    print(f"Dashboard (read-only) → http://{host}:{port}   (Ctrl-C to stop)")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        srv.server_close()

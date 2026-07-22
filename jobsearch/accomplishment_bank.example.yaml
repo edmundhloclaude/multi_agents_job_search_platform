@@ -1,0 +1,55 @@
+# Accomplishment bank (spec §4.3 / §4.4) — the ONLY source of truth for claims.
+#
+# The Crafter selects and rewords ONLY from this file. It never invents
+# employers, dates, titles, metrics, or skills. A post-generation fabrication
+# check refuses to emit any document containing a claim not traceable here.
+#
+# Format:
+#   name / contact              -> your identity (also used to fill applications)
+#   accomplishments[]           -> real roles, each with employer/title/dates,
+#                                  a text bullet, and the metrics/skills it proves
+#   skills / credentials        -> global skills and credentials
+
+name: "Jane Doe"
+contact:
+  email: "jane.doe@example.com"
+  phone: "+1-555-0100"
+  linkedin: "https://linkedin.com/in/janedoe"
+  website: "https://janedoe.dev"
+
+accomplishments:
+  - employer: "Acme Corp"
+    title: "Senior Engineer"
+    start_date: "2019"
+    end_date: "2023"
+    text: "Designed and built a distributed job-scheduling system in Python that cut p99 latency by 40% and scaled to 2M tasks/day."
+    metrics: ["40%", "2M"]
+    skills: ["python", "distributed systems", "kubernetes", "postgres"]
+
+  - employer: "Acme Corp"
+    title: "Senior Engineer"
+    start_date: "2019"
+    end_date: "2023"
+    text: "Led migration of a monolith to services, reducing deploy time from 45 minutes to 6 minutes."
+    metrics: ["45", "6"]
+    skills: ["go", "kubernetes", "ci/cd"]
+
+  - employer: "Globex"
+    title: "Software Engineer"
+    start_date: "2016"
+    end_date: "2019"
+    text: "Built a data platform serving 10,000 internal users and led a team of 6 engineers."
+    metrics: ["10,000", "6"]
+    skills: ["python", "postgres", "leadership"]
+
+skills:
+  - "python"
+  - "distributed systems"
+  - "kubernetes"
+  - "postgres"
+  - "go"
+  - "ci/cd"
+  - "leadership"
+
+credentials:
+  - "BS Computer Science, State University"

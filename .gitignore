@@ -1,0 +1,16 @@
+# Secrets — never commit
+.env
+
+# Personal / per-user files (copy from the *.example templates)
+jobsearch/config.yaml
+jobsearch/accomplishment_bank.yaml
+
+# Runtime data / generated artifacts
+data/
+*.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/

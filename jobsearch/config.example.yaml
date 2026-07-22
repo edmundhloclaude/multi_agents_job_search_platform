@@ -1,0 +1,96 @@
+# Multi-Agent Job Search Platform — configuration TEMPLATE.
+#
+# Copy this to `config.yaml` and customize:  cp config.example.yaml config.yaml
+# `config.yaml` is git-ignored, so your aspirations/settings stay local.
+# Defaults here are SAFE & OFFLINE: no API keys needed, no real browser, no live
+# scraping — a fresh clone runs the mock walkthrough out of the box.
+
+# --- paths (relative paths resolve against this file's directory) ----------- #
+paths:
+  db_path: ../data/jobs.db
+  output_dir: ../data/output
+  strategy_path: ../data/strategy.md
+  accomplishment_bank: ./accomplishment_bank.example.yaml   # copy to your own & repoint
+
+# --- reasoning LLM for the SAFE agents (Strategy / Screener / Crafter) ------ #
+# "none"   -> deterministic, offline (default).
+# "openai" -> GPT-backed. Set OPENAI_API_KEY in .env, then set provider: openai.
+llm:
+  provider: none
+  model: gpt-4o-mini
+
+# --- browser backend -------------------------------------------------------- #
+# "mock"       -> offline fixtures (default; no browser needed).
+# "playwright" -> real headless Chromium (run `playwright install chromium`).
+# "cua"        -> Claude-in-Chrome computer-use (stub).
+browser:
+  driver: mock
+  headless: true
+  fixtures: ./mock_fixtures.json
+
+# --- Strategy Advisor input: YOUR aspirations + hard constraints ------------ #
+# Edit this, then run `jobsearch strategy` (or use `jobsearch strategy-web`).
+profile:
+  summary: "<one line: who you are and the roles you're targeting>"
+  target_roles: ["software engineer"]
+  seniority: ["senior"]
+  comp_min: 150000
+  comp_currency: USD
+  geographies: ["remote"]
+  remote_ok: true
+  must_haves: ["python"]
+  dealbreakers: ["unpaid"]
+  keywords_boost: []
+
+# --- your identity for filling applications --------------------------------- #
+# NOTE: never put passwords / payment / SSN here. No agent handles those.
+user:
+  name: "<Your Name>"
+  contact:
+    email: "you@example.com"
+    phone: ""
+    linkedin: ""
+    website: ""
+
+# --- job sources ------------------------------------------------------------ #
+# The offline mock source is enabled so the walkthrough runs with no keys.
+# Enable a real source (and add its key to .env) when you're ready.
+sources:
+  - name: example_ats_feed        # offline demo via mock_fixtures.json
+    enabled: true
+    type: browser
+    rate_limit_per_min: 6
+    max_pages: 3
+    search_url: "https://example-jobs.test/search?q={query}"
+    results_selector: job
+    next_selector: next
+
+  # TheirStack aggregator (LinkedIn/Indeed/Glassdoor/ATS). Sign up at
+  # https://app.theirstack.com, put THEIRSTACK_API_KEY in .env, set enabled: true.
+  - name: theirstack
+    enabled: false
+    type: api
+    provider: theirstack
+    rate_limit_per_min: 10
+    max_pages: 1
+    api_key_env: THEIRSTACK_API_KEY
+    params:
+      posted_at_max_age_days: 30
+      limit: 10
+
+  # MCP-backed source (e.g. an Indeed MCP server). Point command/url at a real
+  # read-only server and set enabled: true. See README.
+  - name: indeed
+    enabled: false
+    type: mcp
+    rate_limit_per_min: 10
+    mcp:
+      transport: stdio
+      command: python
+      args: ["-m", "indeed_mcp_server"]
+      tool: search_jobs
+      query_arg: query
+      params: { location: "Remote", limit: 25 }
+      result_path: jobs
+      field_map: { company: company, title: title, location: location,
+                   url: url, comp_text: salary, application_method: application_method }

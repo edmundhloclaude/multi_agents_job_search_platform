@@ -1,0 +1,40 @@
+{
+  "_comment": "Offline fixtures for browser.driver=mock. Keys are URLs; the crawler opens search pages (query the 'job' selector) and the applier opens form pages (query the 'form_field' selector). Swap browser.driver to 'cua' for a real Chrome.",
+  "pages": [
+    {
+      "url": "https://example-jobs.test/search?q=software engineer",
+      "elements": {
+        "job": [
+          "{\"company\": \"Nimbus Systems\", \"title\": \"Staff Engineer\", \"location\": \"Remote\", \"url\": \"https://example-jobs.test/job/1\", \"comp_text\": \"$200,000 - $240,000\", \"application_method\": \"external_ats\", \"requirements\": [\"python\", \"distributed systems\", \"kubernetes\"]}",
+          "{\"company\": \"Vertex Labs\", \"title\": \"Senior Backend Engineer\", \"location\": \"San Francisco\", \"url\": \"https://example-jobs.test/job/2\", \"comp_text\": \"$190,000\", \"application_method\": \"external_ats\", \"requirements\": [\"python\", \"postgres\", \"go\"]}",
+          "{\"company\": \"Sketchy Startup\", \"title\": \"Growth Engineer\", \"location\": \"Remote\", \"url\": \"https://example-jobs.test/job/3\", \"comp_text\": \"commission only\", \"application_method\": \"email\", \"requirements\": [\"marketing\"]}"
+        ]
+      }
+    },
+    {
+      "url": "https://example-jobs.test/job/1",
+      "elements": {
+        "form_field": [
+          "{\"name\": \"full_name\", \"label\": \"Full Name\", \"type\": \"text\", \"required\": true}",
+          "{\"name\": \"email\", \"label\": \"Email Address\", \"type\": \"email\", \"required\": true}",
+          "{\"name\": \"phone\", \"label\": \"Phone\", \"type\": \"tel\"}",
+          "{\"name\": \"linkedin\", \"label\": \"LinkedIn URL\", \"type\": \"url\"}",
+          "{\"name\": \"resume\", \"label\": \"Resume / CV\", \"type\": \"file\", \"required\": true}",
+          "{\"name\": \"cover\", \"label\": \"Cover Letter\", \"type\": \"file\"}"
+        ]
+      }
+    },
+    {
+      "url": "https://example-jobs.test/job/2",
+      "elements": {
+        "form_field": [
+          "{\"name\": \"full_name\", \"label\": \"Full Name\", \"type\": \"text\", \"required\": true}",
+          "{\"name\": \"email\", \"label\": \"Email\", \"type\": \"email\", \"required\": true}",
+          "{\"name\": \"resume\", \"label\": \"Upload Resume\", \"type\": \"file\", \"required\": true}",
+          "{\"name\": \"cover\", \"label\": \"Cover Letter\", \"type\": \"file\"}",
+          "{\"name\": \"account_password\", \"label\": \"Create account password\", \"type\": \"password\"}"
+        ]
+      }
+    }
+  ]
+}

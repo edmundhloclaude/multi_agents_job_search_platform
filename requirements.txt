@@ -1,0 +1,31 @@
+# Runtime dependencies (spec §1: keep minimal and pinned).
+PyYAML==6.0.3
+
+# OpenAI-backed reasoning (Strategy/Screener/Crafter) and the OpenAI
+# computer-use BrowserController. Optional: the system runs fully deterministic
+# and offline without it (llm.provider=none, browser.driver=mock).
+openai==2.46.0
+
+# MCP client for MCP-backed job sources in the Crawler (e.g. an Indeed MCP
+# server). Only needed when a source has type: mcp.
+mcp==1.28.1
+
+# Real headless-Chromium browser control for apply-map / apply-submit
+# (browser.driver=playwright). After install, run: playwright install chromium
+# (and `playwright install-deps chromium` for system libs, or install them
+# manually into a userland prefix if you lack root).
+playwright==1.61.0
+
+# Document ingestion for the interactive Strategy Advisor (résumé/JD upload).
+# Only needed for `jobsearch strategy-web` with PDF/DOCX uploads.
+pypdf==6.14.2
+python-docx==1.2.0
+
+# --- test-only ---
+pytest==9.1.1
+
+# Browser control for READ_BROWSER / GATED tiers is Claude-in-Chrome
+# (computer-use). It is abstracted behind jobsearch/browser/controller.py and
+# implemented as a stub in cua_controller.py; wiring it to the live computer-use
+# runtime is deployment-specific and adds no pinned Python dependency here.
+# SQLite is used via the stdlib `sqlite3` module (no dependency).
