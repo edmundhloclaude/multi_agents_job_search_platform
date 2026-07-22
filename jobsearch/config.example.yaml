@@ -24,6 +24,12 @@ llm:
   model: gpt-4o-mini
   # reasoning_effort: high
   # max_tokens: 6000
+  # Optional per-agent overrides (inherit the defaults above). Handy to spend
+  # reasoning where it matters and stay cheap where calls are frequent:
+  # agents:
+  #   strategy: { reasoning_effort: high }
+  #   screener: { reasoning_effort: medium }
+  #   crafter:  { model: gpt-4.1, max_tokens: 1500 }   # many per-bullet calls
 
 # --- browser backend -------------------------------------------------------- #
 # "mock"       -> offline fixtures (default; no browser needed).

@@ -178,19 +178,14 @@ class Orchestrator:
         data = yaml.safe_load(Path(self.config.accomplishment_bank_path).read_text("utf-8"))
         return AccomplishmentBank.from_dict(data or {})
 
-    def _make_llm(self):
-        """Build the reasoning LLM from config, or None (deterministic).
+    def _make_llm(self, agent: str | None = None):
+        """Build the reasoning LLM for a given agent, or None (deterministic).
 
-        config.llm: { provider: openai|none, model: ... }
+        Uses the top-level llm config plus optional per-agent overrides
+        (llm.agents.<agent>). agent is one of: strategy | screener | crafter.
         """
-        spec = (self.config.raw or {}).get("llm", {}) or {}
-        provider = spec.get("provider", "none")
-        if provider == "openai":
-            from .llm.openai_llm import OpenAILLM
-            return OpenAILLM(model=spec.get("model", "gpt-4o-mini"),
-                             reasoning_effort=spec.get("reasoning_effort"),
-                             max_tokens=int(spec.get("max_tokens", 2000)))
-        return None
+        from .llm.factory import make_llm
+        return make_llm((self.config.raw or {}).get("llm", {}), agent)
 
     def _load_criteria(self):
         from .agents.strategy import load_criteria_from_strategy
@@ -213,7 +208,7 @@ class Orchestrator:
             bank = self._load_bank()
         except Exception:
             bank = None
-        crit = StrategyAdvisor(llm=self._make_llm()).run(
+        crit = StrategyAdvisor(llm=self._make_llm("strategy")).run(
             profile, self.config.strategy_path, bank=bank)
         self.log("strategy", TIER.value, f"criteria roles={crit.target_roles}")
         return crit
@@ -243,7 +238,7 @@ class Orchestrator:
         from .agents.screener import Screener, TIER
         assert_controller_for_tier(TIER, None)
         self.log("screen", TIER.value, "started")
-        n = Screener(self.store, llm=self._make_llm()).run(
+        n = Screener(self.store, llm=self._make_llm("screener")).run(
             self._load_criteria(), rescreen=rescreen)
         self.log("screen", TIER.value, f"screened={n}")
         return n
@@ -258,7 +253,7 @@ class Orchestrator:
         if Path(self.config.strategy_path).exists():
             positioning = load_positioning_from_strategy(self.config.strategy_path)
         res = Crafter(self.store, self._load_bank(), self.config.output_dir,
-                      llm=self._make_llm(), positioning=positioning).run()
+                      llm=self._make_llm("crafter"), positioning=positioning).run()
         self.log("craft", TIER.value, f"crafted={res['crafted']} refused={res['refused']}")
         return res
 

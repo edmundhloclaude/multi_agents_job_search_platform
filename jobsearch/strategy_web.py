@@ -207,12 +207,13 @@ def create_server(session: StrategySession, strategy_path: str,
 
 def _build_session(config):
     """Build a StrategySession from config (OpenAI + bank + profile + bank_path)."""
-    from .llm.openai_llm import OpenAILLM
+    from .llm.factory import make_llm
     raw = config.raw or {}
-    lc = raw.get("llm", {}) or {}
-    llm = OpenAILLM(model=lc.get("model", "gpt-4o-mini"),
-                    reasoning_effort=lc.get("reasoning_effort"),
-                    max_tokens=int(lc.get("max_tokens", 2000)))
+    # The interactive advisor is the "strategy" agent.
+    llm = make_llm(raw.get("llm", {}), "strategy")
+    if llm is None:   # provider != openai; chat still needs a model
+        from .llm.openai_llm import OpenAILLM
+        llm = OpenAILLM(model=(raw.get("llm", {}) or {}).get("model", "gpt-4o-mini"))
     try:
         import yaml
         from pathlib import Path
