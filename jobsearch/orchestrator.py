@@ -248,10 +248,15 @@ class Orchestrator:
 
     def run_craft(self):
         from .agents.crafter import Crafter, TIER
+        from .agents.strategy import load_positioning_from_strategy
         assert_controller_for_tier(TIER, None)
         self.log("craft", TIER.value, "started")
+        # The Crafter consumes the Strategy Advisor's positioning lens from strategy.md.
+        positioning = None
+        if Path(self.config.strategy_path).exists():
+            positioning = load_positioning_from_strategy(self.config.strategy_path)
         res = Crafter(self.store, self._load_bank(), self.config.output_dir,
-                      llm=self._make_llm()).run()
+                      llm=self._make_llm(), positioning=positioning).run()
         self.log("craft", TIER.value, f"crafted={res['crafted']} refused={res['refused']}")
         return res
 

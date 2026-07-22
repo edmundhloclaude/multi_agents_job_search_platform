@@ -63,6 +63,8 @@ _HTML = r"""<!doctype html><html lang="en"><head>
  <div class="col right">
    <div class="pad">
      <h2>Documents</h2><div id="docs" class="muted">none yet</div>
+     <button id="draftbank" class="ghost" style="margin-top:8px;font-size:12px;padding:6px 10px">✨ Draft bank entries from docs</button>
+     <div id="drafts"></div>
      <h2 style="margin-top:16px">Screening criteria (YAML)</h2>
      <pre id="yaml">—</pre>
      <div id="warn" class="warn"></div>
@@ -83,6 +85,17 @@ function render(st){
      ? st.documents.map(d=>`<span class="chip">${esc(d)}</span>`).join("") : '<span class="muted">none yet</span>';
   const u = st.ungrounded_must_haves||[];
   $("#warn").textContent = u.length ? ("⚠ must-haves not grounded in your bank/aspirations: "+u.join(", ")) : "";
+  const d = st.draft_entries||[];
+  if(d.length){
+    $("#drafts").innerHTML = '<div class="muted" style="margin:8px 0 4px">Proposed bank entries (review, then add):</div>'
+      + d.map(e=>`<div class="chip" style="display:block;margin:4px 0;padding:8px 10px;white-space:normal">
+          <b>${esc(e.employer)} — ${esc(e.title)}</b> <span class="muted">${esc(e.start_date)}–${esc(e.end_date)}</span><br>
+          ${esc(e.text)}<br><span class="muted">metrics: ${esc((e.metrics||[]).join(", "))} · skills: ${esc((e.skills||[]).join(", "))}</span>
+        </div>`).join("")
+      + `<button id="addbank">Add ${d.length} to accomplishment_bank.yaml</button>`;
+    $("#addbank").onclick=async()=>{const r=await post("/api/commit_bank",{entries:d});
+      $("#drafts").innerHTML='<div class="ok">Added '+(r.added||0)+' entries to your bank.</div>';};
+  } else if($("#drafts").dataset.keep!=="1"){ $("#drafts").innerHTML=""; }
 }
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
@@ -101,6 +114,8 @@ $("#file").onchange=async e=>{const f=e.target.files[0];if(!f)return;
   render(st); e.target.value="";};
 $("#save").onclick=async()=>{const r=await post("/api/save",{});$("#saved").textContent="saved → "+r.saved;
   setTimeout(()=>$("#saved").textContent="",4000);};
+$("#draftbank").onclick=async()=>{$("#drafts").innerHTML='<span class="muted">drafting…</span>';
+  render(await post("/api/draft_bank",{}));};
 load();
 </script></body></html>"""
 
@@ -161,6 +176,13 @@ class _Handler(BaseHTTPRequestHandler):
         elif self.path == "/api/save":
             path = self.session.save(self.server.strategy_path)
             self._json({"saved": path})
+        elif self.path == "/api/draft_bank":
+            entries = self.session.draft_bank_entries()
+            self._json({**self.session.state(), "draft_entries": entries})
+        elif self.path == "/api/commit_bank":
+            entries = self._read_json().get("entries") or self.session.draft_entries
+            added = self.session.commit_bank_entries(entries)
+            self._json({**self.session.state(), "added": added})
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -177,12 +199,12 @@ def create_server(session: StrategySession, strategy_path: str,
     return _Server((host, port), session, strategy_path)
 
 
-def serve(config, *, host: str = "127.0.0.1", port: int = 8766) -> None:
-    """Build a session from config (OpenAI + bank + profile) and serve the UI."""
+def _build_session(config):
+    """Build a StrategySession from config (OpenAI + bank + profile + bank_path)."""
     from .llm.openai_llm import OpenAILLM
     raw = config.raw or {}
     model = (raw.get("llm", {}) or {}).get("model", "gpt-4o-mini")
-    llm = OpenAILLM(model=model)   # chat requires OpenAI; needs OPENAI_API_KEY
+    llm = OpenAILLM(model=model)
     try:
         import yaml
         from pathlib import Path
@@ -191,7 +213,13 @@ def serve(config, *, host: str = "127.0.0.1", port: int = 8766) -> None:
             yaml.safe_load(Path(config.accomplishment_bank_path).read_text("utf-8")) or {})
     except Exception:
         bank = None
-    session = StrategySession(llm, profile=raw.get("profile", {}), bank=bank)
+    return StrategySession(llm, profile=raw.get("profile", {}), bank=bank,
+                           bank_path=config.accomplishment_bank_path)
+
+
+def serve(config, *, host: str = "127.0.0.1", port: int = 8766) -> None:
+    """Build a session from config (OpenAI + bank + profile) and serve the UI."""
+    session = _build_session(config)   # chat requires OpenAI; needs OPENAI_API_KEY
     srv = create_server(session, config.strategy_path, host, port)
     print(f"Strategy Advisor (chat) → http://{host}:{port}   (Ctrl-C to stop)")
     try:

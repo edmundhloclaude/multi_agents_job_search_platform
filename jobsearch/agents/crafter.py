@@ -124,7 +124,7 @@ def find_fabrications(doc_text: str, bank: AccomplishmentBank) -> list[str]:
 # --------------------------------------------------------------------------- #
 # Relevance ranking + rendering
 # --------------------------------------------------------------------------- #
-def _relevance(acc, posting: Posting) -> int:
+def _relevance(acc, posting: Posting, positioning=None) -> int:
     hay = (posting.title + " " + " ".join(posting.requirements) + " " + posting.comp_text).lower()
     score = 0
     for sk in acc.skills:
@@ -133,12 +133,20 @@ def _relevance(acc, posting: Posting) -> int:
     for word in re.findall(r"\w+", acc.text.lower()):
         if len(word) > 4 and word in hay:
             score += 1
+    # Strategy positioning: foreground accomplishments that match the personal
+    # brand (lead_with / emphasize), so tailoring is consistent across postings.
+    if positioning is not None:
+        acc_blob = (acc.text + " " + " ".join(acc.skills)).lower()
+        for term in list(positioning.lead_with) + list(positioning.emphasize):
+            t = str(term).lower().strip()
+            if t and t in acc_blob:
+                score += 5
     return score
 
 
 class Crafter:
     def __init__(self, store: JobStore, bank: AccomplishmentBank, output_dir: str | Path,
-                 *, max_bullets: int = 5, llm=None):
+                 *, max_bullets: int = 5, llm=None, positioning=None):
         self.store = store
         self.bank = bank
         self.output_dir = Path(output_dir)
@@ -147,11 +155,14 @@ class Crafter:
         # Optional OpenAI-backed rewording. The fabrication check ALWAYS runs on
         # the result, so the model can never smuggle in a claim (spec §0.3).
         self.llm = llm
+        # Optional strategy positioning (the shared lens with the Strategy Advisor):
+        # biases selection + framing without introducing claims.
+        self.positioning = positioning
 
     def _select(self, posting: Posting):
         ranked = sorted(
             self.bank.accomplishments,
-            key=lambda a: _relevance(a, posting),
+            key=lambda a: _relevance(a, posting, self.positioning),
             reverse=True,
         )
         return ranked[: self.max_bullets]
@@ -176,7 +187,8 @@ class Crafter:
             bullet = a.text
             if self.llm is not None:
                 from .llm_reasoner import llm_reword_bullet
-                bullet = llm_reword_bullet(self.llm, a.text, posting)
+                bullet = llm_reword_bullet(self.llm, a.text, posting,
+                                           positioning=self.positioning)
             L.append(f"  - {bullet}")
         L.append(f"\n{_SKILLS_HEADER}")
         L.append(", ".join(self._relevant_skills(posting)))
@@ -192,7 +204,8 @@ class Crafter:
         if self.llm is not None:
             from .llm_reasoner import llm_cover_body
             body = llm_cover_body(
-                self.llm, self.bank.name, posting, [a.text for a in selected]
+                self.llm, self.bank.name, posting, [a.text for a in selected],
+                positioning=self.positioning,
             )
             if body:
                 return (f"Dear {posting.company} Hiring Team,\n\n{body}\n\n"

@@ -201,6 +201,24 @@ candidate's **real accomplishment bank** + the aspirations in `config.yaml`'s
   criteria. The `strategy.md` "How these criteria were derived" section records the
   source, rationale, and anything dropped.
 
+## Strategy ↔ Crafter collaboration
+
+The Strategy Advisor and Crafter share the accomplishment bank (truth) and the
+strategy (lens), and hand off in both directions:
+
+- **Positioning → tailoring.** `strategy` emits a `positioning` block (narrative,
+  lead-with themes, emphasize/de-emphasize) into `strategy.md`. The Crafter reads it
+  and biases which real accomplishments it foregrounds and how it frames the cover
+  letter — so every document is on-brand, not just keyword-matched. (Fabrication
+  guard unchanged: emphasis only, never new claims.)
+- **Gap feedback.** `jobsearch gaps` (also a section in `strategy.md`) reports skills
+  your targets want that the bank can't back — `missing` (no evidence) vs `weak`
+  (one story / listed-only) — so you can retarget or add evidence.
+- **Shared intake → bank.** In `strategy-web`, upload a résumé and click *Draft bank
+  entries*: the advisor extracts structured accomplishments for your review, and
+  *Add to accomplishment_bank.yaml* writes the accepted ones back to the Crafter's
+  source of truth (existing identity/entries preserved).
+
 ## Interactive Strategy Advisor (chat + documents, web UI)
 
 ```bash

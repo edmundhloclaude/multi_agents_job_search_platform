@@ -22,12 +22,15 @@ from jobsearch.strategy_web import create_server
 
 class FakeLLM(LLM):
     model = "fake"
-    def __init__(self, criteria, reply="Got it."):
+    def __init__(self, criteria, reply="Got it.", entries=None):
         self.criteria, self.reply, self.calls = criteria, reply, 0
+        self.entries = entries or []
     def complete_text(self, *a, **k):
         return ""
     def complete_json(self, system, user, *, temperature=0.0):
         self.calls += 1
+        if "entries" in system.lower():   # llm_draft_bank_entries prompt
+            return {"entries": self.entries}
         return {"reply": self.reply, "criteria": self.criteria}
 
 
@@ -92,6 +95,38 @@ def test_session_document_triggers_turn(bank):
     assert "resume.txt" in st["documents"]
     assert st["criteria"]["target_roles"] == ["ML Engineer"]
     assert llm.calls == 1
+
+
+def test_draft_and_commit_bank_entries(tmp_path, bank):
+    import yaml
+    bank_path = tmp_path / "accomplishment_bank.yaml"
+    # start from an existing bank with identity we must not clobber
+    bank_path.write_text(yaml.safe_dump({
+        "name": "Jane Doe", "contact": {"email": "j@e.com"},
+        "accomplishments": [], "skills": ["python"]}))
+    entries = [{"employer": "Stripe", "title": "Senior SWE", "start_date": "2020",
+                "end_date": "2024", "text": "Built payments infra handling 50k req/s.",
+                "metrics": ["50k"], "skills": ["go", "kubernetes"]}]
+    llm = FakeLLM({"target_roles": ["SWE"]}, entries=entries)
+    s = StrategySession(llm, profile={}, bank=bank, bank_path=str(bank_path))
+    s.add_document("resume.txt", "Stripe Senior SWE ... 50k req/s ... Go, Kubernetes")
+
+    drafted = s.draft_bank_entries()
+    assert drafted and drafted[0]["employer"] == "Stripe"
+
+    added = s.commit_bank_entries(drafted)
+    assert added == 1
+    written = yaml.safe_load(bank_path.read_text())
+    assert written["name"] == "Jane Doe"                       # identity preserved
+    assert any(a["employer"] == "Stripe" for a in written["accomplishments"])
+    assert "go" in written["skills"] and "kubernetes" in written["skills"]
+    # in-memory bank refreshed so grounding sees the new skills
+    assert "kubernetes" in s.bank.known_skills()
+
+
+def test_commit_without_bank_path_is_noop(bank):
+    s = StrategySession(FakeLLM({}), profile={}, bank=bank, bank_path=None)
+    assert s.commit_bank_entries([{"employer": "X", "text": "y"}]) == 0
 
 
 def test_session_save_roundtrips(tmp_path, bank):

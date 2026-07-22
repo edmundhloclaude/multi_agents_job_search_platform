@@ -120,6 +120,32 @@ class Posting:
 # Strategy criteria (spec §4.1). Machine-usable output the Screener consumes.
 # --------------------------------------------------------------------------- #
 @dataclass
+class Positioning:
+    """The shared lens between Strategy Advisor and Crafter (spec extension).
+
+    Not screening criteria — this tells the Crafter HOW to present the candidate:
+    which real accomplishments to foreground and the narrative to frame them with.
+    It never introduces claims (the fabrication guard still runs); it only shifts
+    emphasis, so every tailored document stays consistent with the strategy.
+    """
+    narrative: str = ""                                    # one-line personal brand
+    lead_with: list[str] = field(default_factory=list)     # themes/skills to foreground
+    emphasize: list[str] = field(default_factory=list)     # keywords to prioritize
+    de_emphasize: list[str] = field(default_factory=list)  # things to downplay
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    def is_empty(self) -> bool:
+        return not (self.narrative or self.lead_with or self.emphasize or self.de_emphasize)
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "Positioning":
+        known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
+        return cls(**{k: v for k, v in (d or {}).items() if k in known})
+
+
+@dataclass
 class StrategyCriteria:
     target_roles: list[str] = field(default_factory=list)
     seniority: list[str] = field(default_factory=list)

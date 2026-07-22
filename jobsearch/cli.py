@@ -202,6 +202,25 @@ def cmd_strategy_web(args):
     serve(cfg, host=args.host, port=args.port)
 
 
+def cmd_gaps(args):
+    orch, _ = _orchestrator(args)
+    from .agents.strategy import gap_report
+    gaps = gap_report(orch._load_criteria(), orch._load_bank())
+    print("\nSkill gaps — what your strategy targets vs. your accomplishment bank:\n")
+    if gaps["missing"]:
+        print("  MISSING (no evidence in bank):")
+        for g in gaps["missing"]:
+            print(f"    - {g}")
+    if gaps["weak"]:
+        print("  WEAK (thin evidence — one story or listed-only):")
+        for g in gaps["weak"]:
+            print(f"    - {g}")
+    if not gaps["missing"] and not gaps["weak"]:
+        print("  none — your bank backs every targeted skill.")
+    print()
+    orch.close()
+
+
 def cmd_status(args):
     orch, raw = _orchestrator(args)
     counts = orch.store.status_counts()
@@ -260,6 +279,7 @@ def build_parser() -> argparse.ArgumentParser:
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8765)
     sv.set_defaults(func=cmd_serve)
+    sub.add_parser("gaps", help="skills your strategy targets that the bank can't back").set_defaults(func=cmd_gaps)
     sw = sub.add_parser("strategy-web", help="interactive strategy advisor (chat + docs) web UI")
     sw.add_argument("--host", default="127.0.0.1")
     sw.add_argument("--port", type=int, default=8766)

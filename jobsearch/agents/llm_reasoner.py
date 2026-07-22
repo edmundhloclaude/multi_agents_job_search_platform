@@ -54,16 +54,25 @@ _BULLET_SYS = (
     "You reword a single resume bullet to fit a target job. STRICT RULES: keep "
     "every number, metric, employer, and technology EXACTLY as given; do not add "
     "any fact, number, employer, title, or metric not present in the input bullet. "
-    "You may only rephrase and reorder. Return JSON: {\"bullet\": str}."
+    "You may only rephrase and reorder. If a `positioning` object is provided, frame "
+    "the wording toward its narrative/lead_with themes — but this changes emphasis "
+    "ONLY, never the facts. Return JSON: {\"bullet\": str}."
 )
 
 
-def llm_reword_bullet(llm, bullet_text: str, posting: Posting) -> str:
-    user = json.dumps({
+def llm_reword_bullet(llm, bullet_text: str, posting: Posting, positioning=None) -> str:
+    payload = {
         "bullet": bullet_text,
         "target_title": posting.title,
         "target_requirements": posting.requirements,
-    }, ensure_ascii=False)
+    }
+    if positioning is not None and not positioning.is_empty():
+        payload["positioning"] = {
+            "narrative": positioning.narrative,
+            "lead_with": positioning.lead_with,
+            "emphasize": positioning.emphasize,
+        }
+    user = json.dumps(payload, ensure_ascii=False)
     try:
         data = llm.complete_json(_BULLET_SYS, user)
         reworded = str(data.get("bullet", "")).strip()
@@ -76,17 +85,23 @@ _COVER_SYS = (
     "You write a concise, professional cover-letter body (2-3 short paragraphs). "
     "STRICT RULES: use ONLY the accomplishments provided; do not invent metrics, "
     "employers, titles, dates, or skills. Do not add numbers not present in the "
-    "provided accomplishments. Return JSON: {\"body\": str}."
+    "provided accomplishments. If a positioning_narrative / lead_with is provided, "
+    "open with that framing and foreground those themes. Return JSON: {\"body\": str}."
 )
 
 
-def llm_cover_body(llm, name: str, posting: Posting, bullets: list[str]) -> Optional[str]:
-    user = json.dumps({
+def llm_cover_body(llm, name: str, posting: Posting, bullets: list[str],
+                   positioning=None) -> Optional[str]:
+    payload = {
         "candidate_name": name,
         "company": posting.company,
         "role": posting.title,
         "accomplishments": bullets,
-    }, ensure_ascii=False)
+    }
+    if positioning is not None and not positioning.is_empty():
+        payload["positioning_narrative"] = positioning.narrative
+        payload["lead_with"] = positioning.lead_with
+    user = json.dumps(payload, ensure_ascii=False)
     try:
         data = llm.complete_json(_COVER_SYS, user)
         body = str(data.get("body", "")).strip()
@@ -114,8 +129,12 @@ _DERIVE_SYS = (
     "`must_haves` = the few (2-5) non-negotiable capabilities a good-fit posting should "
     "require. `keywords_boost` = nice-to-have signals. `target_roles` = specific job "
     "titles to search for. `seniority` = levels (e.g. senior, staff). Include a brief "
-    "`rationale` citing the candidate's real experience. Return JSON with keys: "
-    "target_roles, seniority, must_haves, keywords_boost, rationale."
+    "`rationale` citing the candidate's real experience. ALSO produce a `positioning` "
+    "object telling a resume writer HOW to present this candidate: {narrative: one-line "
+    "personal brand, lead_with: [real skills/themes to foreground], emphasize: [keywords "
+    "to prioritize], de_emphasize: [things to downplay]}. Ground lead_with/emphasize in "
+    "the candidate's demonstrated experience. Return JSON with keys: target_roles, "
+    "seniority, must_haves, keywords_boost, rationale, positioning."
 )
 
 
@@ -138,13 +157,65 @@ def llm_derive_criteria(llm, profile: dict, bank) -> dict:
     def _l(key):
         v = data.get(key, [])
         return [str(x) for x in v] if isinstance(v, list) else []
+    pos = data.get("positioning") or {}
+    pos = pos if isinstance(pos, dict) else {}
+    def _pl(key):
+        v = pos.get(key, [])
+        return [str(x) for x in v] if isinstance(v, list) else []
     return {
         "target_roles": _l("target_roles"),
         "seniority": _l("seniority"),
         "must_haves": _l("must_haves"),
         "keywords_boost": _l("keywords_boost"),
         "rationale": str(data.get("rationale", "")),
+        "positioning": {
+            "narrative": str(pos.get("narrative", "")),
+            "lead_with": _pl("lead_with"),
+            "emphasize": _pl("emphasize"),
+            "de_emphasize": _pl("de_emphasize"),
+        },
     }
+
+
+_DRAFT_BANK_SYS = (
+    "Extract REAL accomplishments from the candidate's document to populate a resume "
+    "accomplishment bank. For each distinct role/achievement, produce an entry with: "
+    "employer, title, start_date, end_date, text (one concise achievement sentence), "
+    "metrics (numbers/percentages that literally appear), skills (technologies/skills "
+    "mentioned). ONLY use information present in the document — never invent employers, "
+    "dates, metrics, or skills. Return JSON: {\"entries\": [{employer, title, start_date, "
+    "end_date, text, metrics, skills}, ...]}."
+)
+
+
+def llm_draft_bank_entries(llm, doc_text: str) -> list[dict]:
+    """Draft structured accomplishment-bank entries from a document (for review)."""
+    if not (doc_text or "").strip():
+        return []
+    try:
+        data = llm.complete_json(_DRAFT_BANK_SYS, doc_text[:12000])
+    except Exception:
+        return []
+    entries = data.get("entries", [])
+    if not isinstance(entries, list):
+        return []
+    out = []
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        def _l(k):
+            v = e.get(k, [])
+            return [str(x) for x in v] if isinstance(v, list) else []
+        out.append({
+            "employer": str(e.get("employer", "")).strip(),
+            "title": str(e.get("title", "")).strip(),
+            "start_date": str(e.get("start_date", "")).strip(),
+            "end_date": str(e.get("end_date", "")).strip(),
+            "text": str(e.get("text", "")).strip(),
+            "metrics": _l("metrics"),
+            "skills": _l("skills"),
+        })
+    return [e for e in out if e["text"]]
 
 
 def llm_strategy_notes(llm, profile: dict) -> list[str]:

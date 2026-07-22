@@ -37,12 +37,15 @@ _MAX_DOC_CHARS = 12000
 
 
 class StrategySession:
-    def __init__(self, llm, *, profile: Optional[dict] = None, bank=None):
+    def __init__(self, llm, *, profile: Optional[dict] = None, bank=None,
+                 bank_path: Optional[str] = None):
         self.llm = llm
         self.profile = profile or {}
         self.bank = bank
+        self.bank_path = bank_path              # where committed bank entries are written
         self.messages: list[dict] = []          # [{role, content}]
         self.documents: list[dict] = []         # [{name, text}]
+        self.draft_entries: list[dict] = []     # last drafted bank entries (unsaved)
         # Seed the draft from the deterministic profile criteria.
         self.criteria = StrategyAdvisor().build_criteria(self.profile)
 
@@ -135,8 +138,55 @@ class StrategySession:
             "yaml": yaml.safe_dump(self.criteria.to_dict(), sort_keys=False).rstrip(),
             "documents": [d["name"] for d in self.documents],
             "ungrounded_must_haves": self.ungrounded_must_haves(),
+            "draft_entries": self.draft_entries,
             "last_reply": last_reply,
         }
+
+    # ------------------------------------------------------------------ #
+    # Shared intake -> bank: draft real accomplishments from uploaded docs.
+    # ------------------------------------------------------------------ #
+    def draft_bank_entries(self) -> list[dict]:
+        """Draft bank entries from all uploaded documents (for user review)."""
+        from .llm_reasoner import llm_draft_bank_entries
+        text = "\n\n".join(f"# {d['name']}\n{d['text']}" for d in self.documents)
+        self.draft_entries = llm_draft_bank_entries(self.llm, text)
+        return self.draft_entries
+
+    def commit_bank_entries(self, entries: list[dict]) -> int:
+        """Append reviewed entries to the accomplishment bank file. Returns count.
+
+        Entries were extracted from the user's own documents and explicitly
+        accepted here — the bank stays a human-reviewed source of truth. Existing
+        bank content (name/contact/other accomplishments) is preserved.
+        """
+        import yaml
+        from ..models import AccomplishmentBank
+        if not self.bank_path or not entries:
+            return 0
+        p = Path(self.bank_path)
+        data = {}
+        if p.exists():
+            data = yaml.safe_load(p.read_text("utf-8")) or {}
+        data.setdefault("accomplishments", [])
+        data.setdefault("skills", [])
+        added = 0
+        for e in entries:
+            data["accomplishments"].append({
+                "employer": e.get("employer", ""), "title": e.get("title", ""),
+                "start_date": e.get("start_date", ""), "end_date": e.get("end_date", ""),
+                "text": e.get("text", ""), "metrics": e.get("metrics", []),
+                "skills": e.get("skills", []),
+            })
+            for s in e.get("skills", []):
+                if s and s not in data["skills"]:
+                    data["skills"].append(s)
+            added += 1
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8")
+        # Refresh in-memory bank so grounding/positioning reflect the new entries.
+        self.bank = AccomplishmentBank.from_dict(data)
+        self.draft_entries = []
+        return added
 
     def save(self, strategy_path: str | Path) -> str:
         """Write strategy.md from the current draft (same format the Screener reads)."""

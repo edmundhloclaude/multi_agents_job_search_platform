@@ -18,7 +18,7 @@ from typing import Any, Optional
 
 import yaml
 
-from ..models import StrategyCriteria, Tier
+from ..models import Positioning, StrategyCriteria, Tier
 
 TIER = Tier.SAFE
 
@@ -90,6 +90,15 @@ class StrategyAdvisor:
         seniority = _clean_list(data.get("seniority")) or base.seniority
         boosts = _clean_list(data.get("keywords_boost")) or base.keywords_boost
 
+        # Positioning (the Crafter's lens). Ground lead_with/emphasize like must_haves.
+        pdata = data.get("positioning", {}) or {}
+        positioning = Positioning(
+            narrative=str(pdata.get("narrative", "")),
+            lead_with=[s for s in _clean_list(pdata.get("lead_with")) if grounded(s)],
+            emphasize=[s for s in _clean_list(pdata.get("emphasize")) if grounded(s)],
+            de_emphasize=_clean_list(pdata.get("de_emphasize")),
+        )
+
         criteria = StrategyCriteria(
             target_roles=roles[:8],
             seniority=seniority[:5],
@@ -105,6 +114,7 @@ class StrategyAdvisor:
             "source": f"llm:{getattr(self.llm, 'model', 'openai')}",
             "rationale": data.get("rationale", ""),
             "dropped_must_haves": dropped_mh,   # ungrounded → excluded (transparency)
+            "positioning": positioning,
         }
         return criteria, meta
 
@@ -157,6 +167,26 @@ class StrategyAdvisor:
         if notes:
             L.append("\n## Market context")
             L += [f"- {n}" for n in notes]
+        positioning = meta.get("positioning")
+        if isinstance(positioning, Positioning) and not positioning.is_empty():
+            L.append("\n## Positioning (how the Crafter should present you)")
+            if positioning.narrative:
+                L.append(f"- Narrative: {positioning.narrative}")
+            if positioning.lead_with:
+                L.append(f"- Lead with: {', '.join(positioning.lead_with)}")
+            if positioning.emphasize:
+                L.append(f"- Emphasize: {', '.join(positioning.emphasize)}")
+            if positioning.de_emphasize:
+                L.append(f"- De-emphasize: {', '.join(positioning.de_emphasize)}")
+
+        gaps = meta.get("gaps")
+        if gaps and (gaps.get("missing") or gaps.get("weak")):
+            L.append("\n## Skill gaps (targets vs. your bank)")
+            if gaps.get("missing"):
+                L.append(f"- Wanted but no evidence in bank: {', '.join(gaps['missing'])}")
+            if gaps.get("weak"):
+                L.append(f"- Thin evidence (1 mention): {', '.join(gaps['weak'])}")
+
         if meta.get("rationale") or meta.get("dropped_must_haves"):
             L.append("\n## How these criteria were derived")
             L.append(f"- Source: {meta.get('source', 'profile')} — criteria grounded "
@@ -166,9 +196,13 @@ class StrategyAdvisor:
             if meta.get("dropped_must_haves"):
                 L.append(f"- Dropped as ungrounded (not in bank or aspirations): "
                          f"{', '.join(meta['dropped_must_haves'])}")
-        L.append("\n## Machine-usable screening criteria")
+        # Machine-usable block: criteria (Screener) + positioning (Crafter).
+        block = {"criteria": criteria.to_dict()}
+        if isinstance(positioning, Positioning) and not positioning.is_empty():
+            block["positioning"] = positioning.to_dict()
+        L.append("\n## Machine-usable strategy (criteria + positioning)")
         L.append("```yaml")
-        L.append(yaml.safe_dump(criteria.to_dict(), sort_keys=False).rstrip())
+        L.append(yaml.safe_dump(block, sort_keys=False).rstrip())
         L.append("```")
         return "\n".join(L) + "\n"
 
@@ -184,18 +218,77 @@ class StrategyAdvisor:
         except Exception:
             # Any LLM/parse failure degrades to the deterministic profile criteria.
             criteria, meta = self.build_criteria(profile), {"source": "profile (fallback)"}
+        if bank is not None:
+            # Include dropped (ungrounded) + profile-stated wants so the gap
+            # signal captures aspirations that outrun the bank's evidence.
+            extra = list(meta.get("dropped_must_haves", [])) + \
+                list(profile.get("must_haves", []) or [])
+            meta["gaps"] = gap_report(criteria, bank, extra_wanted=extra)
         md = self.render_markdown(profile, criteria, meta)
         Path(strategy_path).parent.mkdir(parents=True, exist_ok=True)
         Path(strategy_path).write_text(md, encoding="utf-8")
         return criteria
 
 
-def load_criteria_from_strategy(strategy_path: str | Path) -> Optional[StrategyCriteria]:
-    """Parse the machine-usable YAML block back out of strategy.md."""
+def _machine_block(strategy_path: str | Path) -> Optional[dict]:
     text = Path(strategy_path).read_text(encoding="utf-8")
     marker = "```yaml"
     if marker not in text:
         return None
     block = text.split(marker, 1)[1].split("```", 1)[0]
     data = yaml.safe_load(block)
-    return StrategyCriteria.from_dict(data or {})
+    return data if isinstance(data, dict) else None
+
+
+def load_criteria_from_strategy(strategy_path: str | Path) -> Optional[StrategyCriteria]:
+    """Parse the screening criteria out of strategy.md.
+
+    Handles both the newer wrapped form ({criteria: {...}, positioning: {...}})
+    and the older flat form (criteria fields at top level)."""
+    data = _machine_block(strategy_path)
+    if data is None:
+        return None
+    crit = data.get("criteria", data)   # wrapper or flat (back-compat)
+    return StrategyCriteria.from_dict(crit or {})
+
+
+def load_positioning_from_strategy(strategy_path: str | Path) -> Positioning:
+    """Parse the Crafter's positioning lens out of strategy.md (empty if absent)."""
+    data = _machine_block(strategy_path)
+    if not data:
+        return Positioning()
+    return Positioning.from_dict(data.get("positioning", {}))
+
+
+def gap_report(criteria: StrategyCriteria, bank, extra_wanted=None) -> dict:
+    """Skills the strategy wants vs. what the accomplishment bank can back up.
+
+    Evidence is measured by ACCOMPLISHMENTS (a story that proves the skill), not
+    the global skills list. Returns {"missing", "weak"}:
+      * missing = no accomplishment evidence and not even a listed skill,
+      * weak    = only one accomplishment mentions it, OR it's a listed skill with
+                  no accomplishment behind it (thin — hard to make a resume bullet).
+    ``extra_wanted`` lets callers include aspirational skills the grounding guard
+    already dropped, so the signal survives. Pure function; no LLM.
+    """
+    wanted, seen = [], set()
+    for w in (list(criteria.must_haves) + list(criteria.keywords_boost)
+              + list(extra_wanted or [])):
+        wl = str(w).strip().lower()
+        if wl and wl not in seen:
+            seen.add(wl)
+            wanted.append(wl)
+    global_skills = {s.lower() for s in bank.skills}
+    evidence = [f"{a.text} {' '.join(a.skills)}".lower() for a in bank.accomplishments]
+    missing, weak = [], []
+    for w in wanted:
+        acc_hits = sum(1 for t in evidence if w in t)
+        if acc_hits >= 2:
+            continue                       # well evidenced
+        if acc_hits == 1:
+            weak.append(w)                 # thin: only one story
+        elif w in global_skills:
+            weak.append(w)                 # listed but no accomplishment backs it
+        else:
+            missing.append(w)              # no evidence at all
+    return {"missing": missing, "weak": weak}
