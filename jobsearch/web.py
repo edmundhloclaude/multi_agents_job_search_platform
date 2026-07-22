@@ -82,7 +82,8 @@ _HTML = r"""<!doctype html>
   .foot{color:var(--muted);font-size:12px;padding:2px 2px}
 </style></head><body>
 <header><span class="dot"></span><h1>Job Search — Agent Activity</h1>
-  <span class="muted" id="sub"></span></header>
+  <span class="muted" id="sub"></span>
+  <a href="/strategy" style="margin-left:auto;text-decoration:none;padding:6px 12px;border-radius:8px;border:1px solid var(--accent);color:var(--accent);font-weight:600">Strategy Advisor →</a></header>
 <main>
   <div class="tiles" id="tiles"></div>
   <div class="card"><h2>Pipeline</h2><div class="stages" id="stages"></div></div>
@@ -163,22 +164,81 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 store.close()
             self._send(200, body, "application/json")
+        elif self.path == "/strategy" or self.path.startswith("/strategy/"):
+            self._strategy("GET")
         else:
             self._send(404, b"not found", "text/plain")
 
-    # Only GET is allowed; the dashboard is strictly read-only.
     def do_POST(self):
-        self._send(405, b"read-only dashboard", "text/plain")
+        # The Strategy Advisor sub-app IS a writer (authors strategy.md / bank);
+        # the dashboard's own status routes stay strictly read-only.
+        if self.path == "/strategy" or self.path.startswith("/strategy/"):
+            self._strategy("POST")
+        else:
+            self._send(405, b"read-only dashboard", "text/plain")
+
+    def _strategy(self, method: str):
+        from .strategy_web import route_strategy
+        session, err = self.server.strategy_session()
+        subpath = self.path[len("/strategy"):] or "/"
+        if session is None:
+            if method == "GET" and subpath in ("", "/"):
+                html = ("<h2>Strategy Advisor unavailable</h2>"
+                        f"<p>{err}</p><p><a href='/'>&larr; Dashboard</a></p>")
+                self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
+            else:
+                self._send(200, json.dumps({"error": err}).encode("utf-8"),
+                           "application/json")
+            return
+        payload = {}
+        if method == "POST":
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if n:
+                try:
+                    payload = json.loads(self.rfile.read(n).decode("utf-8"))
+                except json.JSONDecodeError:
+                    payload = {}
+        code, ctype, body = route_strategy(
+            session, self.server.strategy_path, subpath, method, payload)
+        self._send(code, body, ctype)
 
 
-def create_server(db_path: str, host: str = "127.0.0.1", port: int = 8765) -> ThreadingHTTPServer:
+class _DashServer(ThreadingHTTPServer):
+    """Serves the read-only dashboard and (if configured) the Strategy Advisor
+    at /strategy. The strategy session is built lazily on first use so the
+    dashboard works without OpenAI."""
+
+    def __init__(self, addr, handler, db_path, config):
+        super().__init__(addr, handler)
+        self.db_path = db_path
+        self.config = config
+        self.strategy_path = getattr(config, "strategy_path", "") if config else ""
+        self._session = None
+
+    def strategy_session(self):
+        if self._session is not None:
+            return self._session, None
+        if self.config is None:
+            return None, "Strategy Advisor is not configured on this server."
+        try:
+            from .strategy_web import _build_session
+            self._session = _build_session(self.config)
+            return self._session, None
+        except Exception as e:  # e.g. OPENAI_API_KEY missing
+            return None, f"{type(e).__name__}: {e}"
+
+
+def create_server(db_path: str, host: str = "127.0.0.1", port: int = 8765,
+                  config=None) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (_Handler,), {"db_path": db_path})
-    return ThreadingHTTPServer((host, port), handler)
+    return _DashServer((host, port), handler, db_path, config)
 
 
-def serve(db_path: str, host: str = "127.0.0.1", port: int = 8765) -> None:
-    srv = create_server(db_path, host, port)
+def serve(db_path: str, host: str = "127.0.0.1", port: int = 8765, config=None) -> None:
+    srv = create_server(db_path, host, port, config)
     print(f"Dashboard (read-only) → http://{host}:{port}   (Ctrl-C to stop)")
+    if config is not None:
+        print(f"Strategy Advisor      → http://{host}:{port}/strategy")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

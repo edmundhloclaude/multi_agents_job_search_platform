@@ -193,7 +193,7 @@ def cmd_run(args):
 def cmd_serve(args):
     cfg, _ = load_config(args.config)
     from .web import serve
-    serve(cfg.db_path, host=args.host, port=args.port)
+    serve(cfg.db_path, host=args.host, port=args.port, config=cfg)  # mounts /strategy
 
 
 def cmd_strategy_web(args):

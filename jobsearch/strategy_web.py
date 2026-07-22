@@ -49,7 +49,8 @@ _HTML = r"""<!doctype html><html lang="en"><head>
  label.up{display:inline-block;border:1px dashed var(--line);border-radius:10px;padding:8px 12px;
    cursor:pointer;color:var(--muted);font-size:13px}
 </style></head><body>
-<header><h1>Strategy Advisor</h1><span class="muted" id="sub">chat + documents → screening criteria</span></header>
+<header><a id="nav" href="/" class="ghost" style="display:none;text-decoration:none;padding:6px 10px;border-radius:8px;border:1px solid var(--line);color:var(--fg)">← Dashboard</a>
+  <h1>Strategy Advisor</h1><span class="muted" id="sub">chat + documents → screening criteria</span></header>
 <div class="wrap">
  <div class="col">
    <div class="msgs" id="msgs"></div>
@@ -77,6 +78,9 @@ _HTML = r"""<!doctype html><html lang="en"><head>
 </div>
 <script>
 const $=s=>document.querySelector(s);
+// Works whether served standalone at "/" or mounted under "/strategy".
+const BASE=(location.pathname.replace(/\/+$/,"")==="/strategy")?"/strategy":"";
+if(BASE){document.getElementById("nav").style.display="inline";}
 function render(st){
   $("#msgs").innerHTML = (st.messages||[]).map(m=>`<div class="msg ${m.role}">${esc(m.content)}</div>`).join("");
   $("#msgs").scrollTop = 1e9;
@@ -98,9 +102,9 @@ function render(st){
   } else if($("#drafts").dataset.keep!=="1"){ $("#drafts").innerHTML=""; }
 }
 const esc=s=>String(s==null?"":s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-async function post(url,body){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},
+async function post(url,body){const r=await fetch(BASE+url,{method:"POST",headers:{"Content-Type":"application/json"},
   body:JSON.stringify(body||{})});return r.json();}
-async function load(){render(await (await fetch("/api/state")).json());}
+async function load(){render(await (await fetch(BASE+"/api/state")).json());}
 async function send(){const t=$("#in").value.trim();if(!t)return;$("#in").value="";
   $("#send").disabled=true;$("#send").textContent="…";
   render(await post("/api/message",{text:t}));$("#send").disabled=false;$("#send").textContent="Send";}
@@ -120,71 +124,73 @@ load();
 </script></body></html>"""
 
 
+def strategy_html() -> bytes:
+    return _HTML.encode("utf-8")
+
+
+def route_strategy(session: StrategySession, strategy_path: str, subpath: str,
+                   method: str, payload: dict) -> tuple[int, str, bytes]:
+    """Route one strategy request. Reused by the standalone server and the unified
+    dashboard (mounted under /strategy). Returns (status, content_type, body)."""
+    def j(obj):
+        return (200, "application/json", json.dumps(obj).encode("utf-8"))
+    sp = subpath or "/"
+    if method == "GET":
+        if sp in ("", "/", "/index.html"):
+            return (200, "text/html; charset=utf-8", strategy_html())
+        if sp.startswith("/api/state"):
+            return j(session.state())
+        return (404, "text/plain", b"not found")
+    if method == "POST":
+        if sp == "/api/message":
+            text = str(payload.get("text", "")).strip()
+            return j(session.send(text) if text else session.state())
+        if sp == "/api/upload":
+            name = payload.get("name", "document")
+            try:
+                text = extract_text(name, base64.b64decode(payload.get("b64", "")))
+            except DocIngestError as e:
+                return j({**session.state(), "error": str(e)})
+            except Exception as e:
+                return j({**session.state(), "error": f"decode failed: {e}"})
+            session.add_document(name, text)
+            return j(session.note_document(name))
+        if sp == "/api/save":
+            return j({"saved": session.save(strategy_path)})
+        if sp == "/api/draft_bank":
+            return j({**session.state(), "draft_entries": session.draft_bank_entries()})
+        if sp == "/api/commit_bank":
+            entries = payload.get("entries") or session.draft_entries
+            return j({**session.state(), "added": session.commit_bank_entries(entries)})
+    return (404, "text/plain", b"not found")
+
+
 class _Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
-    def _send(self, code, body: bytes, ctype: str):
+    def _dispatch(self, method: str):
+        payload = {}
+        if method == "POST":
+            n = int(self.headers.get("Content-Length", 0) or 0)
+            if n:
+                try:
+                    payload = json.loads(self.rfile.read(n).decode("utf-8"))
+                except json.JSONDecodeError:
+                    payload = {}
+        code, ctype, body = route_strategy(
+            self.server.session, self.server.strategy_path, self.path, method, payload)
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, obj, code=200):
-        self._send(code, json.dumps(obj).encode("utf-8"), "application/json")
-
-    def _read_json(self) -> dict:
-        n = int(self.headers.get("Content-Length", 0) or 0)
-        if not n:
-            return {}
-        try:
-            return json.loads(self.rfile.read(n).decode("utf-8"))
-        except json.JSONDecodeError:
-            return {}
-
-    @property
-    def session(self) -> StrategySession:
-        return self.server.session
-
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
-            self._send(200, _HTML.encode("utf-8"), "text/html; charset=utf-8")
-        elif self.path.startswith("/api/state"):
-            self._json(self.session.state())
-        else:
-            self._send(404, b"not found", "text/plain")
+        self._dispatch("GET")
 
     def do_POST(self):
-        if self.path == "/api/message":
-            text = str(self._read_json().get("text", "")).strip()
-            self._json(self.session.send(text) if text else self.session.state())
-        elif self.path == "/api/upload":
-            body = self._read_json()
-            name = body.get("name", "document")
-            try:
-                data = base64.b64decode(body.get("b64", ""))
-                text = extract_text(name, data)
-            except DocIngestError as e:
-                self._json({**self.session.state(), "error": str(e)})
-                return
-            except Exception as e:
-                self._json({**self.session.state(), "error": f"decode failed: {e}"})
-                return
-            self.session.add_document(name, text)
-            self._json(self.session.note_document(name))
-        elif self.path == "/api/save":
-            path = self.session.save(self.server.strategy_path)
-            self._json({"saved": path})
-        elif self.path == "/api/draft_bank":
-            entries = self.session.draft_bank_entries()
-            self._json({**self.session.state(), "draft_entries": entries})
-        elif self.path == "/api/commit_bank":
-            entries = self._read_json().get("entries") or self.session.draft_entries
-            added = self.session.commit_bank_entries(entries)
-            self._json({**self.session.state(), "added": added})
-        else:
-            self._send(404, b"not found", "text/plain")
+        self._dispatch("POST")
 
 
 class _Server(ThreadingHTTPServer):

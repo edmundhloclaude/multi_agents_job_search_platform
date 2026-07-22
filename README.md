@@ -251,6 +251,12 @@ It reads the same SQLite store the Orchestrator writes to, so it updates live
 (with the active stage highlighted), the Orchestrator's run log with trust-tier
 badges (SAFE / READ_BROWSER / GATED), and the jobs table.
 
+It's the **hub**: a "Strategy Advisor →" link opens the interactive advisor at
+`/strategy` on the same server/port (with a link back). One `serve`, one URL —
+the strategy session is built lazily, so the dashboard still works without OpenAI.
+The dashboard's own status routes stay read-only (POST → 405); the `/strategy`
+sub-app is the authoring surface that writes `strategy.md` / the bank.
+
 Stdlib `http.server` (no extra deps), bound to localhost, and **strictly
 read-only** — GET only; it cannot trigger stages or submit anything. The submit
 gate stays a typed CLI confirmation (spec §0.2); a web button must never cross it.
