@@ -209,8 +209,10 @@ def _build_session(config):
     """Build a StrategySession from config (OpenAI + bank + profile + bank_path)."""
     from .llm.openai_llm import OpenAILLM
     raw = config.raw or {}
-    model = (raw.get("llm", {}) or {}).get("model", "gpt-4o-mini")
-    llm = OpenAILLM(model=model)
+    lc = raw.get("llm", {}) or {}
+    llm = OpenAILLM(model=lc.get("model", "gpt-4o-mini"),
+                    reasoning_effort=lc.get("reasoning_effort"),
+                    max_tokens=int(lc.get("max_tokens", 2000)))
     try:
         import yaml
         from pathlib import Path

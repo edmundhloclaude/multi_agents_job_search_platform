@@ -15,9 +15,15 @@ paths:
 # --- reasoning LLM for the SAFE agents (Strategy / Screener / Crafter) ------ #
 # "none"   -> deterministic, offline (default).
 # "openai" -> GPT-backed. Set OPENAI_API_KEY in .env, then set provider: openai.
+# Classic models (gpt-4o-mini, gpt-4.1): fast, cheap. Reasoning models
+# (gpt-5.x, o-series) support `reasoning_effort` (minimal|low|medium|high) for
+# higher intelligence at more cost/latency; `max_tokens` is the output budget
+# (reasoning tokens count against it — keep it generous for high effort).
 llm:
   provider: none
   model: gpt-4o-mini
+  # reasoning_effort: high
+  # max_tokens: 6000
 
 # --- browser backend -------------------------------------------------------- #
 # "mock"       -> offline fixtures (default; no browser needed).

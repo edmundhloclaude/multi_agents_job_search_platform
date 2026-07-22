@@ -187,7 +187,9 @@ class Orchestrator:
         provider = spec.get("provider", "none")
         if provider == "openai":
             from .llm.openai_llm import OpenAILLM
-            return OpenAILLM(model=spec.get("model", "gpt-4o-mini"))
+            return OpenAILLM(model=spec.get("model", "gpt-4o-mini"),
+                             reasoning_effort=spec.get("reasoning_effort"),
+                             max_tokens=int(spec.get("max_tokens", 2000)))
         return None
 
     def _load_criteria(self):
