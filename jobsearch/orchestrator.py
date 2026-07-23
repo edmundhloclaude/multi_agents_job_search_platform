@@ -225,14 +225,21 @@ class Orchestrator:
                 fetchers[s["name"]] = registry[s["provider"]]
         return fetchers
 
-    def run_crawl(self, *, api_fetchers=None):
+    def run_crawl(self, *, api_fetchers=None, only=None):
+        """Crawl enabled sources. If ``only`` (list of source names) is given,
+        crawl exactly those — forcing them enabled — regardless of config flags."""
         from .agents.crawler import Crawler, TIER
+        sources = self.config.sources
+        if only:
+            wanted = {s.lower() for s in only}
+            sources = [{**s, "enabled": True} for s in self.config.sources
+                       if str(s.get("name", "")).lower() in wanted]
         self.log("crawl", TIER.value, "started")
         controller = self.read_only_controller()  # tier-enforced read-only
         assert_controller_for_tier(TIER, controller)
         crawler = Crawler(self.store, controller,
                           api_fetchers=api_fetchers or self._build_api_fetchers())
-        reports = crawler.run(self._load_criteria(), self.config.sources)
+        reports = crawler.run(self._load_criteria(), sources)
         controller.close()
         return reports
 
@@ -320,10 +327,10 @@ class Orchestrator:
             results.append((p.dedup_key, status))
         return results
 
-    def run_full(self, profile: dict, *, api_fetchers=None):
+    def run_full(self, profile: dict, *, api_fetchers=None, only=None):
         """Full pipeline, halting AT the submit gate (spec §5)."""
         self.run_strategy(profile)
-        self.run_crawl(api_fetchers=api_fetchers)
+        self.run_crawl(api_fetchers=api_fetchers, only=only)
         self.run_screen()
         self.run_craft()
         self.run_apply_map()   # identity sourced from the bank, not config

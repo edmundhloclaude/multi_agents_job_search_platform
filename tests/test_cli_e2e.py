@@ -29,6 +29,13 @@ def cfg_path(tmp_path):
     for s in raw["sources"]:
         s["enabled"] = (s.get("name") == "example_ats_feed")
         s["rate_limit_per_min"] = 600000  # don't wait on the real-time limiter
+    # A disabled offline mock source (same fixtures) for the --source force-enable test.
+    raw["sources"].append({
+        "name": "backup_board", "enabled": False, "type": "browser",
+        "search_url": "https://example-jobs.test/search?q={query}",
+        "results_selector": "job", "next_selector": "next",
+        "max_pages": 1, "rate_limit_per_min": 600000,
+    })
     p = tmp_path / "config.yaml"
     p.write_text(yaml.safe_dump(raw))
     return str(p)
@@ -112,6 +119,46 @@ def test_reset_all_clears_docs_and_strategy(cfg_path, capsys):
     cli.main(["-c", cfg_path, "reset", "--yes", "--all"])
     assert not os.path.exists(strat)
     assert not any(os.scandir(out_dir))         # output dir emptied
+
+
+def test_crawl_list_sources(cfg_path, capsys):
+    cli.main(["-c", cfg_path, "crawl", "--list-sources"])
+    out = capsys.readouterr().out
+    assert "example_ats_feed" in out and "theirstack" in out
+    assert "[enabled]" in out and "[disabled]" in out
+
+
+def test_crawl_source_filter_only_named(cfg_path, capsys):
+    cli.main(["-c", cfg_path, "strategy"])     # so the crawl has target-role queries
+    cli.main(["-c", cfg_path, "crawl", "--source", "example_ats_feed"])
+    out = capsys.readouterr().out
+    assert "Crawling only: example_ats_feed" in out
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    postings = orch.store.all()
+    assert len(postings) > 0
+    assert {p.source for p in postings} == {"example_ats_feed"}
+    orch.close()
+
+
+def test_crawl_source_force_enables_disabled(cfg_path, capsys):
+    # backup_board is disabled in config; naming it should still crawl it.
+    cli.main(["-c", cfg_path, "strategy"])
+    cli.main(["-c", cfg_path, "crawl", "--source", "backup_board"])
+    out = capsys.readouterr().out
+    assert "[backup_board]" in out and "disabled" not in out
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    assert {p.source for p in orch.store.all()} == {"backup_board"}  # force-enabled + crawled
+    orch.close()
+
+
+def test_crawl_unknown_source(cfg_path, capsys):
+    cli.main(["-c", cfg_path, "crawl", "--source", "bogus"])
+    out = capsys.readouterr().out
+    assert "Unknown source(s): bogus" in out
+    assert "No valid sources" in out
+    orch, _ = cli._orchestrator(type("A", (), {"config": cfg_path})())
+    assert orch.store.all() == []
+    orch.close()
 
 
 def test_status_runs(cfg_path, capsys):

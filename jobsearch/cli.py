@@ -137,9 +137,49 @@ def cmd_strategy(args):
     orch.close()
 
 
+def _flatten_sources(values):
+    """--source may repeat and/or be comma-separated -> flat list (or None)."""
+    if not values:
+        return None
+    out = []
+    for v in values:
+        out += [s.strip() for s in str(v).split(",") if s.strip()]
+    return out or None
+
+
+def _resolve_sources(orch, only):
+    """Validate requested source names against config; return the valid subset
+    or None. Prints a warning for unknown names."""
+    available = [s.get("name") for s in orch.config.sources]
+    if not only:
+        return None
+    unknown = [s for s in only if s not in available]
+    if unknown:
+        print(f"Unknown source(s): {', '.join(unknown)}. "
+              f"Available: {', '.join(available)}")
+    valid = [s for s in only if s in available]
+    return valid or []
+
+
 def cmd_crawl(args):
     orch, raw = _orchestrator(args)
-    reports = orch.run_crawl()
+    if getattr(args, "list_sources", False):
+        print("Configured sources:")
+        for s in orch.config.sources:
+            tag = "enabled" if s.get("enabled") else "disabled"
+            kind = s.get("provider") or s.get("type", "?")
+            print(f"  {s.get('name'):18s} [{tag}]  {s.get('type')}/{kind}")
+        orch.close()
+        return
+    only = _flatten_sources(args.source)
+    if only is not None:
+        only = _resolve_sources(orch, only)
+        if not only:
+            print("No valid sources to crawl — nothing done.")
+            orch.close()
+            return
+        print(f"Crawling only: {', '.join(only)} (overriding enabled flags)")
+    reports = orch.run_crawl(only=only)
     for r in reports:
         note = "HANDOFF-TO-HUMAN" if r.handoff else (r.error or "ok")
         print(f"[{r.source}] new={r.new} seen={r.seen} pages={r.pages} — {note}")
@@ -184,7 +224,10 @@ def cmd_apply_submit(args):
 def cmd_run(args):
     orch, raw = _orchestrator(args)
     print("Running full pipeline (halts BEFORE the submit gate)...")
-    awaiting = orch.run_full(raw.get("profile", {}))
+    only = _flatten_sources(getattr(args, "source", None))
+    if only is not None:
+        only = _resolve_sources(orch, only)
+    awaiting = orch.run_full(raw.get("profile", {}), only=only or None)
     print(f"\nPipeline complete. {len(awaiting)} application(s) awaiting approval.")
     print("Review and submit with:  jobsearch apply-submit")
     orch.close()
@@ -292,14 +335,22 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     sub.add_parser("strategy", help="(re)generate strategy.md").set_defaults(func=cmd_strategy)
-    sub.add_parser("crawl", help="extract postings into store").set_defaults(func=cmd_crawl)
+    cp = sub.add_parser("crawl", help="extract postings into store")
+    cp.add_argument("--source", action="append", metavar="NAME",
+                    help="crawl only these source(s) (repeatable or comma-separated), "
+                         "overriding enabled flags. e.g. --source theirstack,fantastic_jobs")
+    cp.add_argument("--list-sources", action="store_true", help="list configured sources and exit")
+    cp.set_defaults(func=cmd_crawl)
     sp = sub.add_parser("screen", help="score unscreened jobs")
     sp.add_argument("--rescreen", action="store_true", help="re-score all jobs (idempotent)")
     sp.set_defaults(func=cmd_screen)
     sub.add_parser("craft", help="generate docs for screened_in jobs").set_defaults(func=cmd_craft)
     sub.add_parser("apply-map", help="prepare filled applications (no submit)").set_defaults(func=cmd_apply_map)
     sub.add_parser("apply-submit", help="review + approve + submit, one at a time").set_defaults(func=cmd_apply_submit)
-    sub.add_parser("run", help="full pipeline, halting at the submit gate").set_defaults(func=cmd_run)
+    rp = sub.add_parser("run", help="full pipeline, halting at the submit gate")
+    rp.add_argument("--source", action="append", metavar="NAME",
+                    help="crawl only these source(s) (repeatable or comma-separated)")
+    rp.set_defaults(func=cmd_run)
     sv = sub.add_parser("serve", help="read-only web dashboard of agent activity")
     sv.add_argument("--host", default="127.0.0.1")
     sv.add_argument("--port", type=int, default=8765)

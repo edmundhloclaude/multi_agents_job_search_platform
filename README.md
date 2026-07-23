@@ -141,7 +141,9 @@ forces re-running the others.
 
 ```bash
 python -m jobsearch strategy      # build strategy.md + machine-usable criteria
-python -m jobsearch crawl         # READ_BROWSER: extract postings, dedup, respect rate limits
+python -m jobsearch crawl         # extract postings (all enabled sources)
+python -m jobsearch crawl --source theirstack,fantastic_jobs   # only these vendors
+python -m jobsearch crawl --list-sources                       # list configured sources
 python -m jobsearch screen        # score 0–100, screen_in / screen_out
 python -m jobsearch craft         # tailor resume + cover letter for screened_in jobs
 python -m jobsearch apply-map     # SAFE: map each form to your data -> awaiting_approval
