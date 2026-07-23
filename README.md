@@ -288,7 +288,21 @@ backend (OpenAI plans actions from screenshots, Playwright executes them) once
 `computer-use-preview` is enabled on your key; the DOM-native controller above
 is the reliable default and needs no vision/CU model.
 
-## Live API sources (TheirStack)
+## Live API sources (TheirStack, Fantastic.jobs)
+
+Add a `type: api` source with a known `provider`; the key lives in `.env`
+(referenced by `api_key_env`), never in config. Bundled providers:
+
+- **`theirstack`** — TheirStack aggregator (LinkedIn/Indeed/Glassdoor/ATS), deduped.
+- **`fantastic_jobs`** — Fantastic.jobs Active Jobs DB (200k+ career sites + ATS +
+  boards, hourly). Supports the direct API (`auth: bearer`, default) or RapidAPI
+  (`auth: rapidapi`). `time_frame`/`title`/`location`/`limit` params; the posting
+  description feeds the Screener.
+
+Adding another provider is a ~60-line fetcher `(source, query) -> list[dict]`
+registered in `orchestrator._build_api_fetchers` — see `jobsearch/sources/`.
+
+### TheirStack
 
 The Crawler ships with a real aggregator source, **TheirStack** (covers
 LinkedIn/Indeed/Glassdoor/ATS, deduped). Enable it in three steps:

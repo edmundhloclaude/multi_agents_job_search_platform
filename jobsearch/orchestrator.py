@@ -216,7 +216,9 @@ class Orchestrator:
     def _build_api_fetchers(self) -> dict:
         """Map source name -> fetcher for `type: api` sources with a known provider."""
         from .sources.theirstack import theirstack_fetcher
-        registry = {"theirstack": theirstack_fetcher}
+        from .sources.fantastic_jobs import fantastic_jobs_fetcher
+        registry = {"theirstack": theirstack_fetcher,
+                    "fantastic_jobs": fantastic_jobs_fetcher}
         fetchers = {}
         for s in self.config.sources:
             if s.get("type") == "api" and s.get("provider") in registry:

@@ -84,6 +84,22 @@ sources:
       posted_at_max_age_days: 30
       limit: 10
 
+  # Fantastic.jobs (Active Jobs DB): 200k+ career sites + ATS + boards, hourly.
+  # Sign up at https://fantastic.jobs, put FANTASTIC_JOBS_API_KEY in .env.
+  # auth: bearer (direct API, default) or rapidapi (X-RapidAPI-Key headers).
+  - name: fantastic_jobs
+    enabled: false
+    type: api
+    provider: fantastic_jobs
+    rate_limit_per_min: 10
+    max_pages: 1
+    api_key_env: FANTASTIC_JOBS_API_KEY
+    params:
+      time_frame: 24h          # 1h | 24h | 7d
+      limit: 10
+      # auth: rapidapi         # if using the RapidAPI listing instead of the direct API
+      # location: '"United States"'
+
   # MCP-backed source (e.g. an Indeed MCP server). Point command/url at a real
   # read-only server and set enabled: true. See README.
   - name: indeed
