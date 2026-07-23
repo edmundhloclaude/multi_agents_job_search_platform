@@ -13,6 +13,7 @@ from jobsearch.models import StrategyCriteria
 from jobsearch.sources import fantastic_jobs as fj
 from jobsearch.store.job_store import JobStore
 
+# Mirrors the real Active Jobs DB schema (ai_* enrichments, location_type, etc.)
 _SAMPLE = [
     {
         "title": "Staff Software Engineer",
@@ -20,11 +21,13 @@ _SAMPLE = [
         "url": "https://nimbus.example/careers/1",
         "locations_derived": ["San Francisco, United States"],
         "cities_derived": ["San Francisco"], "countries_derived": ["United States"],
-        "remote_derived": True,
-        "salary_raw": {"currency": "USD", "value": {"minValue": 200000, "maxValue": 240000,
-                                                    "unitText": "YEAR"}},
-        "employment_type": ["FULL_TIME"],
-        "date_posted": "2026-07-20",
+        "location_type": "Remote",
+        "ai_work_arrangement": "Remote",
+        "ai_salary_min_value": 200000, "ai_salary_max_value": 240000,
+        "ai_salary_currency": "USD", "ai_salary_unit_text": "YEAR",
+        "ai_key_skills": ["Python", "Distributed Systems", "Go"],
+        "employment_type": ["Full time"],
+        "date_posted": "2026-07-20T00:00:00",
         "description_text": "Build distributed systems in Python and Go.",
     },
     {
@@ -32,7 +35,7 @@ _SAMPLE = [
         "organization": "Vertex Labs",
         "url": "https://vertex.example/jobs/2",
         "locations_derived": ["Remote"],
-        "salary_raw": None,
+        "ai_key_skills": ["Python"],
         "description_text": "Own the platform.",
     },
 ]
@@ -45,6 +48,8 @@ def test_map_job_fields():
     assert "San Francisco" in m["location"] and "Remote" in m["location"]
     assert m["url"] == "https://nimbus.example/careers/1"
     assert "200,000-240,000" in m["comp_text"] and "USD" in m["comp_text"]
+    # ai_key_skills -> requirements (screening signal)
+    assert "python" in m["requirements"] and "distributed systems" in m["requirements"]
     # description exposed under raw["description"] for the Screener/dashboard
     assert m["raw"]["description"] == "Build distributed systems in Python and Go."
 

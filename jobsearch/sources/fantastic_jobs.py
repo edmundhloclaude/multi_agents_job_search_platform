@@ -56,37 +56,41 @@ def _location(job: dict) -> str:
         if isinstance(job.get("countries_derived"), list) and job["countries_derived"]:
             parts.append(str(job["countries_derived"][0]))
         loc = ", ".join(parts)
-    if job.get("remote_derived"):
+    # Remote signal lives in location_type / ai_work_arrangement (no remote flag).
+    arr = " ".join(str(job.get(k, "") or "") for k in
+                   ("location_type", "ai_work_arrangement")).lower()
+    if "remote" in arr:
         loc = f"{loc} (Remote)".strip() if loc else "Remote"
     return loc
 
 
+def _num(x):
+    return f"{x:,}" if isinstance(x, (int, float)) else str(x)
+
+
 def _comp_text(job: dict) -> str:
-    sr = job.get("salary_raw")
-    if isinstance(sr, dict):
-        val = sr.get("value") or {}
-        cur = sr.get("currency", "") or ""
-        lo, hi = val.get("minValue"), val.get("maxValue")
-        unit = val.get("unitText", "") or ""
-        if lo and hi:
-            return f"{cur} {lo:,}-{hi:,} {unit}".strip() if isinstance(lo, (int, float)) \
-                else f"{cur} {lo}-{hi} {unit}".strip()
-        if val.get("value"):
-            return f"{cur} {val['value']} {unit}".strip()
-    return str(sr) if sr else ""
+    lo, hi = job.get("ai_salary_min_value"), job.get("ai_salary_max_value")
+    cur = job.get("ai_salary_currency") or ""
+    unit = job.get("ai_salary_unit_text") or ""
+    if lo and hi:
+        return f"{cur} {_num(lo)}-{_num(hi)} {unit}".strip()
+    if job.get("ai_salary_value"):
+        return f"{cur} {_num(job['ai_salary_value'])} {unit}".strip()
+    sal = job.get("salary")
+    return str(sal) if sal else ""
 
 
 def _map_job(job: dict) -> dict:
-    et = job.get("employment_type")
-    if isinstance(et, list):
-        et = ", ".join(str(x) for x in et)
+    # ai_key_skills is a parsed skills list — use it as requirements (screening signal).
+    skills = job.get("ai_key_skills")
+    reqs = [str(s).strip().lower() for s in skills][:40] if isinstance(skills, list) else []
     return {
         "company": job.get("organization", "") or "",
         "title": job.get("title", "") or "",
         "location": _location(job),
         "url": job.get("url", "") or "",
         "comp_text": _comp_text(job),
-        "requirements": [],   # base tier has free-text description, not parsed reqs
+        "requirements": reqs,
         "application_method": "external_ats",
         # Expose the description under "description" so the Screener/dashboard
         # pick it up uniformly (they read raw["description"]).
@@ -125,7 +129,7 @@ def search_jobs(
     else:
         headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
 
-    base_params: dict[str, Any] = {"time_frame": "24h", "description_type": "text"}
+    base_params: dict[str, Any] = {"time_frame": "24h", "description_format": "text"}
     base_params.update(params)
     base_params["limit"] = limit
     if query:
